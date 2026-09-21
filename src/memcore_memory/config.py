@@ -1,14 +1,32 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
 from pathlib import Path
 from typing import Optional
 
+# Paths derived from data_dir, and the filename each one gets inside it.
+_DERIVED_PATHS = {
+    "db_path": "memory.db",
+    "vector_path": "vectors.hnsw",
+    "key_path": "master.key",
+    "audit_log_path": "audit.log",
+    "working_buffer_path": "working_buffer.jsonl",
+}
+
 class Settings(BaseSettings):
+    # Every Dockerfile, compose file and doc in this project sets MNEM_* - the prefix
+    # must match or the whole environment is silently ignored.
+    model_config = SettingsConfigDict(env_prefix="MNEM_", extra="allow")
+
     data_dir: Path = Path.home() / ".memcore"
-    db_path: Path = data_dir / "memory.db"
-    vector_path: Path = data_dir / "vectors.hnsw"
-    key_path: Path = data_dir / "master.key"
-    audit_log_path: Path = data_dir / "audit.log"
-    working_buffer_path: Path = data_dir / "working_buffer.jsonl"
+    # Left as None so they can be resolved against the *effective* data_dir below.
+    # Defining them as `data_dir / "..."` would freeze them to the default at class
+    # creation time, silently ignoring MNEM_DATA_DIR. Set any of them explicitly
+    # (e.g. MNEM_DB_PATH) to override just that one.
+    db_path: Optional[Path] = None
+    vector_path: Optional[Path] = None
+    key_path: Optional[Path] = None
+    audit_log_path: Optional[Path] = None
+    working_buffer_path: Optional[Path] = None
     p2p_port: int = 7742
     p2p_peers: list[str] = []
 
@@ -43,9 +61,12 @@ class Settings(BaseSettings):
     semantic_consolidation_threshold: int = 3
     forgetting_model: str = "exponential"
 
-    class Config:
-        env_prefix = "MEMCORE_"
-        extra = "allow"
+    @model_validator(mode="after")
+    def _resolve_paths(self):
+        for field, filename in _DERIVED_PATHS.items():
+            if getattr(self, field) is None:
+                object.__setattr__(self, field, self.data_dir / filename)
+        return self
 
 settings = Settings()
 settings.data_dir.mkdir(parents=True, exist_ok=True)
