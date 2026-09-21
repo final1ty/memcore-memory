@@ -7,8 +7,13 @@
   "command": "memcore",
   "args": ["server", "mcp"],
   "env": {
-    "MNEM_DATA_DIR": "Data directory (defaults to ~/.memcore)",
-    "MNEM_MASTER_PASSWORD": "Required when the master key is password-protected; stdio has no terminal to prompt on"
+    "MNEM_DATA_DIR": "Data directory (defaults to ~/.memcore). Local mode only.",
+    "MNEM_MASTER_PASSWORD": "Required when the master key is password-protected; stdio has no terminal to prompt on. Local mode only.",
+    "MNEM_REMOTE_URL": "Equivalent to --remote: proxy to a running REST instance instead of opening a local store"
+  },
+  "remote_mode": {
+    "args": ["server", "mcp", "--remote", "http://HOST:8000"],
+    "note": "Forwards every tool to POST /mcp/call on a running instance, which dispatches through the same HANDLERS table as the stdio server - so the tool surface cannot drift between the two. Required whenever the real store lives inside a container: a host-side process opening its own data dir is a different database, not the same memory. memory_export/memory_import resolve their path on the server."
   },
   "tools_count": 29,
   "tools": [

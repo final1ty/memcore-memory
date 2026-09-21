@@ -6,7 +6,7 @@
 
 # Mnemosyne — Production-Grade Lifelong Memory for AI Agents
 
-Local-first, zero-cloud memory with AES-256-GCM encryption, 4-tier Ebbinghaus forgetting curve, 6-way hybrid retrieval (MRR@10=0.85), federated P2P sync, built-in knowledge graph, MCP Server (33 tools), CLI (200+ commands), REST API, Python SDK.
+Local-first, zero-cloud memory with AES-256-GCM encryption, 4-tier Ebbinghaus forgetting curve, 6-way hybrid retrieval (MRR@10=0.85), federated P2P sync, built-in knowledge graph, MCP Server (29 tools), CLI (60 commands), REST API, Python SDK.
 
 ## Features Checklist
 - [x] **Local-first, zero-cloud** — SQLite + HNSW, no external calls. AES-256-GCM authenticated encryption, Argon2id KDF
@@ -30,7 +30,7 @@ KnowledgeGraph ←→ HybridRetriever (6-way)
   ↓
 CRDT + Gossip → P2PNode (Federated Sync)
   ↓
-MCP (33 tools) + REST + CLI (200+) + SDK
+MCP (29 tools) + REST + CLI (60) + SDK
 ```
 
 ## Install
@@ -97,6 +97,30 @@ curl -X POST http://localhost:8000/recall -d '{"query":"hello","k":5}'
 `MNEM_MASTER_PASSWORD` is required whenever the master key is password-protected:
 stdio transport has no terminal, so the server cannot prompt and will exit with a
 diagnostic on stderr instead of hanging. Leave it out if the key is unprotected.
+
+### Connecting to a server instead of a local store
+
+If the store you want is being served by another process — a Docker container, a
+remote host — do **not** point `MNEM_DATA_DIR` at a directory on the client machine.
+That opens a second, unrelated database: it answers every query happily and none of
+the answers are the memories you stored. Use bridge mode instead, which forwards
+every tool to the running instance:
+
+```json
+{
+  "mcpServers": {
+    "memcore": {
+      "command": "mnem",
+      "args": ["server", "mcp", "--remote", "http://192.168.1.183:8000"]
+    }
+  }
+}
+```
+
+No password is needed client-side — the server already unlocked its key. Both modes
+expose the same 29 tools through the same handlers. `memory_export`/`memory_import`
+resolve their path on the server.
+
 See [mcp_manifest.json](mcp_manifest.json) for the full tool list. Every advertised tool has a real implementation; `mcp/server.py` asserts this at import time.
 
 ## Security
@@ -138,6 +162,8 @@ docker run --rm \
 ```
 
 Restore by extracting the tarball back into a fresh volume the same way, with `tar xzf` in place of `tar czf` and the source/destination swapped.
+
+The tarball contains `master.key` alongside `memory.db`, so treat it as key material — and never restore a database without the key it was encrypted under. They are only useful as a pair.
 
 > **Before relying on this**: confirm the volume actually contains data first — `docker run --rm -v memcore-memory-100_mnem_data:/volume alpine ls -la /volume`. A past bug (`MNEM_*` env vars not matching the app's configured prefix, see [CLAUDE.md](CLAUDE.md#known-issues-critical)) meant the container silently wrote all memory data into its own writable layer instead of this volume, which would make the command above back up an empty directory. That's fixed in source but the running container may still predate the fix until it's rebuilt — check first, every time, don't assume the volume is current just because the command exits 0.
 
