@@ -15,6 +15,7 @@ Usage:
   await storage.init()
 """
 
+import sys
 import json, time, uuid
 from typing import List, Optional
 from pathlib import Path
@@ -90,7 +91,7 @@ class PostgresStore:
                 await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
             except Exception as e:
-                print(f"[postgres] Could not create extensions (need superuser): {e}")
+                print(f"[postgres] Could not create extensions (need superuser): {e}", file=sys.stderr)
             await conn.run_sync(Base.metadata.create_all)
 
         # Try create HNSW index if pgvector >=0.5

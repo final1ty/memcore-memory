@@ -1,4 +1,5 @@
 
+import sys
 from typing import List
 from .base import BaseEmbedder
 
@@ -29,15 +30,15 @@ class BGEEmbedder(BaseEmbedder):
             self._model = SentenceTransformer(self.model_name, device=device)
             if not self.dim:
                 self.dim = self._model.get_sentence_embedding_dimension()
-            print(f"[embeddings] Loaded {self.model_name} dim={self.dim} on {device}")
+            print(f"[embeddings] Loaded {self.model_name} dim={self.dim} on {device}", file=sys.stderr)
         except ImportError as e:
-            print(f"[embeddings] sentence-transformers not installed, fallback to hash. pip install sentence-transformers torch")
+            print(f"[embeddings] sentence-transformers not installed, fallback to hash. pip install sentence-transformers torch", file=sys.stderr)
             from .local import LocalHashEmbedder
             fallback = LocalHashEmbedder(dim=self.dim or 768)
             self.embed = fallback.embed
             self.dim = fallback.dim
         except Exception as e:
-            print(f"[embeddings] Failed to load {self.model_name}: {e}, using hash fallback")
+            print(f"[embeddings] Failed to load {self.model_name}: {e}, using hash fallback", file=sys.stderr)
             from .local import LocalHashEmbedder
             fallback = LocalHashEmbedder(dim=self.dim or 768)
             self.embed = fallback.embed

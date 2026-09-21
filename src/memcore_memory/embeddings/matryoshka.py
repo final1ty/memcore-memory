@@ -4,6 +4,7 @@ Matryoshka Embeddings + Binary Quantization - excellent version
 - MRL: single 1024d model, truncate to 384/768 dynamically
 - Binary quantization for pgvector 1/32 size, 3x faster
 """
+import sys
 from typing import List
 from .base import BaseEmbedder
 import numpy as np
@@ -21,9 +22,9 @@ class MatryoshkaEmbedder(BaseEmbedder):
         try:
             from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self.model_name, trust_remote_code=True)
-            print(f"[matryoshka] Loaded {self.model_name} full_dim={self.full_dim} target_dim={self.dim}")
+            print(f"[matryoshka] Loaded {self.model_name} full_dim={self.full_dim} target_dim={self.dim}", file=sys.stderr)
         except Exception as e:
-            print(f"[matryoshka] Failed: {e}, fallback to hash")
+            print(f"[matryoshka] Failed: {e}, fallback to hash", file=sys.stderr)
             from .local import LocalHashEmbedder
             self._fallback = LocalHashEmbedder(dim=self.dim)
             self._model = None

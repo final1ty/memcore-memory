@@ -5,6 +5,7 @@ Cross-encoder Reranker + SPLADE + GraphRAG - excellent version
 - SPLADE learned sparse retrieval stub
 - GraphRAG community detection
 """
+import sys
 from typing import List, Dict
 import asyncio
 
@@ -19,9 +20,9 @@ class CrossEncoderReranker:
         try:
             from sentence_transformers import CrossEncoder
             self._model = CrossEncoder(self.model_name, device=self.device)
-            print(f"[reranker] Loaded {self.model_name}")
+            print(f"[reranker] Loaded {self.model_name}", file=sys.stderr)
         except Exception as e:
-            print(f"[reranker] Failed to load {self.model_name}: {e}, using fallback scoring")
+            print(f"[reranker] Failed to load {self.model_name}: {e}, using fallback scoring", file=sys.stderr)
             self._model = None
 
     def rerank(self, query: str, docs: List[Dict], top_k: int = 10) -> List[Dict]:
@@ -52,7 +53,7 @@ class SPLADERetriever:
         self.model_name = model_name
         self._model = None
         # Fallback to BM25 if not available
-        print(f"[splade] SPLADE retriever stub - would load {model_name} for learned sparse")
+        print(f"[splade] SPLADE retriever stub - would load {model_name} for learned sparse", file=sys.stderr)
 
     async def retrieve(self, query: str, k: int = 20) -> List[Dict]:
         # Stub returns empty, BM25 handles it

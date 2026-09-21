@@ -5,6 +5,7 @@ Append-only audit log with HMAC chaining - excellent version
 - Tamper-evident: chain verification
 - No plaintext content logged
 """
+import sys
 import json, time, hmac, hashlib, os
 from pathlib import Path
 from typing import Optional
@@ -68,11 +69,11 @@ class AuditLog:
                     entry = json.loads(line)
                     expected = self._compute_chain_hash(prev, {k: v for k, v in entry.items() if k not in ['prev_hash','chain_hash']})
                     if entry['chain_hash'] != expected or entry['prev_hash'] != prev:
-                        print(f"Chain broken at line {line_num}")
+                        print(f"Chain broken at line {line_num}", file=sys.stderr)
                         return False
                     prev = entry['chain_hash']
                 except Exception as e:
-                    print(f"Invalid entry at line {line_num}: {e}")
+                    print(f"Invalid entry at line {line_num}: {e}", file=sys.stderr)
                     return False
         return True
 
