@@ -24,9 +24,22 @@ app.add_typer(sync_app, name="sync")
 app.add_typer(system_app, name="system")
 app.add_typer(api_app, name="server")
 
-async def get_memory_system():
+# Filled in by the root callback so every subcommand can unlock the key non-interactively.
+_STATE = {"password": None}
+
+@app.callback()
+def _root(
+    password: str = typer.Option(
+        None, "--password", envvar="MNEM_MASTER_PASSWORD",
+        help="Master password for the encrypted store. Falls back to $MNEM_MASTER_PASSWORD, "
+             "then to an interactive prompt when stdin is a terminal.",
+    )
+):
+    _STATE["password"] = password
+
+async def get_memory_system(password: str = None):
     km = KeyManager(settings.key_path)
-    key = km.load_or_create()
+    key = km.load_or_create(password=password or _STATE.get("password"))
     cipher = AES256GCM(key)
     store = EncryptedStore(settings.db_path, cipher)
     await store.init()
@@ -179,7 +192,7 @@ def sync_add_peer(peer_url: str):
 @system_app.command("init")
 def system_init(password: str = typer.Option(None, help="Master password")):
     km = KeyManager(settings.key_path)
-    key = km.load_or_create(password=password)
+    key = km.load_or_create(password=password or _STATE.get("password"))
     print(f"[green]Initialized[/green] at {settings.data_dir} with AES-256-GCM key {len(key)*8}-bit")
 
 @system_app.command("stats")
@@ -216,12 +229,25 @@ def server_start(port: int = 8000, host: str = "0.0.0.0"):
 
 @api_app.command("mcp")
 def server_mcp():
+    """Serve the MCP protocol over stdio (for Claude Desktop, Claude Code, any MCP client)."""
+    import sys, contextlib
+    from ..crypto.key_manager import MasterPasswordRequired
+
     async def _run():
-        mem = await get_memory_system()
-        from ..mcp.server import MCPServer
-        server = MCPServer(mem)
+        # stdout is the JSON-RPC stream from here on; keep startup chatter off it.
+        with contextlib.redirect_stdout(sys.stderr):
+            mem = await get_memory_system()
+            from ..mcp.server import MCPServer
+            server = MCPServer(mem)
         await server.serve_stdio()
-    run_async(_run())
+
+    try:
+        run_async(_run())
+    except MasterPasswordRequired as e:
+        print(f"[memcore] {e}", file=sys.stderr)
+        raise typer.Exit(1)
+    except (KeyboardInterrupt, EOFError):
+        raise typer.Exit(0)
 
 if __name__ == "__main__":
     app()

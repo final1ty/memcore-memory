@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "memcore": {
+      "command": "/mnt/nas7/SkyNas/memcore-memory/memcore-memory-1.0.0/.venv/bin/python",
+      "args": ["-u", "-m", "memcore_memory.cli.main", "server", "mcp"],
+      "env": {
+        "MNEM_DATA_DIR": "${MNEM_DATA_DIR:-/home/skynas/.memcore}",
+        "MNEM_MASTER_PASSWORD": "${MNEM_MASTER_PASSWORD}"
+      }
+    }
+  }
+}
