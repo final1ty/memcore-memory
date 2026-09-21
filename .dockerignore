@@ -1,0 +1,16 @@
+# Without this the build context is ~250MB of .venv and .git that the image never
+# uses - the Dockerfile only COPYs pyproject.toml, README.md and src/.
+.venv/
+.git/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.egg-info/
+backups/
+.mcp.json
+k8s/
+examples/
+tests/
