@@ -11,6 +11,14 @@ class Tier(str, Enum):
     EPISODIC = "episodic"
     SEMANTIC = "semantic"
 
+# Starting Ebbinghaus strength S0 for a *new* memory in each tier, in days.
+TIER_BASE_STRENGTH = {
+    Tier.SENSORY: 0.0005,   # ~30s
+    Tier.WORKING: 0.014,    # ~20min
+    Tier.EPISODIC: 7.0,     # weeks
+    Tier.SEMANTIC: 365.0,   # years
+}
+
 @dataclass
 class MemoryItem:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -19,21 +27,22 @@ class MemoryItem:
     timestamp: float = field(default_factory=time.time)
     embedding: Optional[list[float]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    forgetting: ForgettingCurve = field(default_factory=ForgettingCurve)
+    # None means "new memory": seed the curve from the tier. A curve passed in
+    # explicitly (i.e. loaded from storage) is authoritative and must not be
+    # overwritten - doing so discarded every rehearsal the memory had earned and
+    # left the forgetting curve permanently pinned to its tier baseline.
+    forgetting: Optional[ForgettingCurve] = None
     entities: list[str] = field(default_factory=list)
     relations: list[dict] = field(default_factory=list)
 
     def __post_init__(self):
+        if self.forgetting is None:
+            self.forgetting = ForgettingCurve(
+                strength=TIER_BASE_STRENGTH.get(self.tier, 7.0),
+                importance=self.metadata.get('importance', 0.5),
+            )
         if self.forgetting.last_access == 0:
             self.forgetting.last_access = self.timestamp
-        if self.tier == Tier.SENSORY:
-            self.forgetting.strength = 0.0005
-        elif self.tier == Tier.WORKING:
-            self.forgetting.strength = 0.014
-        elif self.tier == Tier.EPISODIC:
-            self.forgetting.strength = 7.0
-        elif self.tier == Tier.SEMANTIC:
-            self.forgetting.strength = 365.0
 
     def touch(self):
         self.forgetting.rehearse()

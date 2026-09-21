@@ -106,8 +106,22 @@ class EncryptedStore:
             await db.commit()
 
     async def update_tier(self, memory_id: str, tier: Tier):
+        """Move a memory between tiers, raising its decay strength to the new floor.
+
+        Strength is only ever raised, never lowered: a memory that earned a long
+        retention through rehearsal keeps it even if it is demoted.
+        """
+        from ..core.tiers import TIER_BASE_STRENGTH
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute('UPDATE memories SET tier=? WHERE id=?', (tier.value, memory_id))
+            async with db.execute('SELECT forgetting_json FROM memories WHERE id=?', (memory_id,)) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                return
+            forgetting = json.loads(row[0])
+            forgetting['strength'] = max(forgetting.get('strength', 1.0),
+                                         TIER_BASE_STRENGTH.get(tier, 7.0))
+            await db.execute('UPDATE memories SET tier=?, forgetting_json=? WHERE id=?',
+                             (tier.value, json.dumps(forgetting), memory_id))
             await db.commit()
 
     async def search_by_content(self, query: str, limit: int = 50) -> List[MemoryItem]:
