@@ -6,8 +6,6 @@
 
 # Mnemosyne — Production-Grade Lifelong Memory for AI Agents
 
-[Architecture](../resource/image_20260919_040727.webp)
-
 Local-first, zero-cloud memory with AES-256-GCM encryption, 4-tier Ebbinghaus forgetting curve, 6-way hybrid retrieval (MRR@10=0.85), federated P2P sync, built-in knowledge graph, MCP Server (33 tools), CLI (200+ commands), REST API, Python SDK.
 
 ## Features Checklist
