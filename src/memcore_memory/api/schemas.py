@@ -25,3 +25,8 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     tier_counts: Dict[str, int]
+
+class MCPCallRequest(BaseModel):
+    """One MCP tool invocation forwarded by mcp/remote.py."""
+    name: str
+    arguments: Dict[str, Any] = {}

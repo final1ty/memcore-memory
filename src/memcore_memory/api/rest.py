@@ -1,7 +1,9 @@
 
 from fastapi import FastAPI, HTTPException
-from .schemas import MemoryAddRequest, RecallRequest, RecallResponse, MemoryAddResponse, HealthResponse
+from .schemas import MemoryAddRequest, RecallRequest, RecallResponse, MemoryAddResponse, HealthResponse, MCPCallRequest
 from ..core.tiers import Tier
+from ..mcp.server import HANDLERS, SERVER_NAME, SERVER_VERSION, ToolError
+from ..mcp.tools import get_tools_schema
 from collections import Counter
 
 def create_app(memory_system):
@@ -63,5 +65,31 @@ def create_app(memory_system):
     async def kg_traverse(entity: str, depth: int = 2, limit: int = 20):
         results = await memory_system.kg.traverse(entity, depth=depth, limit=limit)
         return {"entity": entity, "results": results}
+
+    # --- MCP bridge -------------------------------------------------------
+    # These two routes let an MCP client reach this instance's store without
+    # opening the database itself. See mcp/remote.py for why that matters.
+
+    @app.get("/mcp/tools")
+    async def mcp_tools():
+        return {"server": SERVER_NAME, "version": SERVER_VERSION, "tools": get_tools_schema()}
+
+    @app.post("/mcp/call")
+    async def mcp_call(req: MCPCallRequest):
+        """Dispatch through the same handlers the stdio server uses.
+
+        Tool-level failures come back as ``ok: false`` rather than an HTTP error, so
+        the bridge can tell "you called this wrong" apart from "the server is down".
+        """
+        handler = HANDLERS.get(req.name)
+        if handler is None:
+            return {"ok": False, "error": f"unknown tool {req.name!r}"}
+        try:
+            result = await handler(memory_system, req.arguments or {})
+        except ToolError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": True, "result": result}
 
     return app

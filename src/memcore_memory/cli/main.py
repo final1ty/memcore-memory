@@ -11,7 +11,7 @@ from ..storage.vector_store import VectorStore
 from ..graph.kg import KnowledgeGraph
 from ..core.memory import MnemosyneMemory
 
-app = typer.Typer(help="Mnemosyne - Production-grade lifelong memory system (200+ commands)", rich_markup_mode="rich")
+app = typer.Typer(help="memcore - Production-grade lifelong memory system (60 commands)", rich_markup_mode="rich")
 memory_app = typer.Typer(help="Memory operations")
 kg_app = typer.Typer(help="Knowledge graph")
 sync_app = typer.Typer(help="P2P sync")
@@ -228,22 +228,38 @@ def server_start(port: int = 8000, host: str = "0.0.0.0"):
     uvicorn.run(app_fast, host=host, port=port)
 
 @api_app.command("mcp")
-def server_mcp():
+def server_mcp(
+    remote: str = typer.Option(
+        None, "--remote", envvar="MNEM_REMOTE_URL",
+        help="Proxy to a running REST instance (e.g. http://192.168.1.183:8000) instead of "
+             "opening the local store. Needed whenever the real store lives in a container: "
+             "the host copy is a different database.",
+    ),
+    timeout: float = typer.Option(30.0, help="HTTP timeout in seconds, --remote only."),
+):
     """Serve the MCP protocol over stdio (for Claude Desktop, Claude Code, any MCP client)."""
     import sys, contextlib
     from ..crypto.key_manager import MasterPasswordRequired
+    from ..mcp.remote import RemoteUnavailable
 
     async def _run():
         # stdout is the JSON-RPC stream from here on; keep startup chatter off it.
         with contextlib.redirect_stdout(sys.stderr):
-            mem = await get_memory_system()
-            from ..mcp.server import MCPServer
-            server = MCPServer(mem)
+            if remote:
+                from ..mcp.remote import RemoteMCPServer
+                server = await RemoteMCPServer(remote, timeout=timeout).connect()
+            else:
+                mem = await get_memory_system()
+                from ..mcp.server import MCPServer
+                server = MCPServer(mem)
         await server.serve_stdio()
 
     try:
         run_async(_run())
     except MasterPasswordRequired as e:
+        print(f"[memcore] {e}", file=sys.stderr)
+        raise typer.Exit(1)
+    except RemoteUnavailable as e:
         print(f"[memcore] {e}", file=sys.stderr)
         raise typer.Exit(1)
     except (KeyboardInterrupt, EOFError):

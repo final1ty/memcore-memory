@@ -346,34 +346,38 @@ assert _advertised == set(HANDLERS), (
 )
 
 
-class MCPServer:
-    """Wraps a MnemosyneMemory instance as an MCP server."""
+INSTRUCTIONS = (
+    "Persistent 4-tier memory with Ebbinghaus forgetting. Use memory_recall to "
+    "look things up and memory_add to store them. Memories decay unless rehearsed; "
+    "memory_touch or a higher tier keeps something durable."
+)
 
-    def __init__(self, memory_system):
-        self.memory = memory_system
+
+class StdioMCPServer:
+    """Shared stdio/JSON-RPC plumbing: tool advertisement, dispatch, error mapping.
+
+    Subclasses supply the advertised schema and implement ``handle_tool_call``.
+    ``remote.py`` reuses this to proxy the same tool surface over HTTP.
+    """
+
+    def __init__(self, tools_schema, instructions: str = INSTRUCTIONS):
         self.tools = [
             types.Tool(name=t["name"], description=t["description"], inputSchema=t["inputSchema"])
-            for t in get_tools_schema()
+            for t in tools_schema
         ]
         self.server = Server(
             SERVER_NAME,
             version=SERVER_VERSION,
-            instructions="Persistent 4-tier memory with Ebbinghaus forgetting. Use memory_recall to "
-                         "look things up and memory_add to store them. Memories decay unless rehearsed; "
-                         "memory_touch or a higher tier keeps something durable.",
+            instructions=instructions,
             on_list_tools=self._on_list_tools,
             on_call_tool=self._on_call_tool,
         )
 
+    async def handle_tool_call(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        raise NotImplementedError
+
     async def _on_list_tools(self, ctx, params) -> types.ListToolsResult:
         return types.ListToolsResult(tools=self.tools)
-
-    async def handle_tool_call(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        """Dispatch by tool name. Raises ToolError for anything the client got wrong."""
-        handler = HANDLERS.get(name)
-        if handler is None:
-            raise ToolError(f"unknown tool {name!r}")
-        return await handler(self.memory, args or {})
 
     async def _on_call_tool(self, ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
         try:
@@ -392,3 +396,18 @@ class MCPServer:
     async def serve_stdio(self):
         async with stdio_server() as (read_stream, write_stream):
             await self.server.run(read_stream, write_stream, self.server.create_initialization_options())
+
+
+class MCPServer(StdioMCPServer):
+    """Serves a local MnemosyneMemory instance directly."""
+
+    def __init__(self, memory_system):
+        super().__init__(get_tools_schema())
+        self.memory = memory_system
+
+    async def handle_tool_call(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Dispatch by tool name. Raises ToolError for anything the client got wrong."""
+        handler = HANDLERS.get(name)
+        if handler is None:
+            raise ToolError(f"unknown tool {name!r}")
+        return await handler(self.memory, args or {})
