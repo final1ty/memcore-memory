@@ -1,0 +1,40 @@
+
+# 33 MCP tools definition
+TOOLS = [
+    {"name": "memory_add", "description": "Add a new memory", "params": ["content","tier","importance","entities"]},
+    {"name": "memory_get", "description": "Get memory by ID", "params": ["id"]},
+    {"name": "memory_delete", "description": "Delete memory", "params": ["id"]},
+    {"name": "memory_update", "description": "Update memory content/metadata", "params": ["id","content","metadata"]},
+    {"name": "memory_recall", "description": "6-way hybrid retrieval", "params": ["query","k","tier_filter"]},
+    {"name": "memory_search_bm25", "description": "BM25 lexical search", "params": ["query","k"]},
+    {"name": "memory_search_vector", "description": "Vector similarity search", "params": ["query","k"]},
+    {"name": "memory_search_graph", "description": "Knowledge graph traversal", "params": ["entity","depth"]},
+    {"name": "memory_search_temporal", "description": "Temporal/recency search", "params": ["query","k"]},
+    {"name": "memory_list", "description": "List memories by tier", "params": ["tier","limit"]},
+    {"name": "memory_list_all", "description": "List all memories", "params": ["limit"]},
+    {"name": "memory_promote", "description": "Promote memory tier (sensory->working->episodic->semantic)", "params": ["id","target_tier"]},
+    {"name": "memory_demote", "description": "Demote memory tier", "params": ["id","target_tier"]},
+    {"name": "memory_touch", "description": "Rehearse memory (boost Ebbinghaus strength)", "params": ["id"]},
+    {"name": "memory_forget", "description": "Force forget expired memories", "params": []},
+    {"name": "memory_consolidate", "description": "Consolidate episodic to semantic", "params": []},
+    {"name": "memory_stats", "description": "Get memory stats per tier", "params": []},
+    {"name": "memory_export", "description": "Export encrypted memories", "params": ["path"]},
+    {"name": "memory_import", "description": "Import memories", "params": ["path"]},
+    {"name": "kg_add_entity", "description": "Add entity to KG", "params": ["entity","type"]},
+    {"name": "kg_add_relation", "description": "Add relation", "params": ["src","dst","relation","weight"]},
+    {"name": "kg_traverse", "description": "Traverse KG from entity", "params": ["entity","depth","limit"]},
+    {"name": "kg_get_related", "description": "Get related memories via KG", "params": ["entity"]},
+    {"name": "kg_list_entities", "description": "List KG entities", "params": ["limit"]},
+    {"name": "kg_delete_entity", "description": "Delete KG entity", "params": ["entity"]},
+    {"name": "sync_status", "description": "P2P sync status", "params": []},
+    {"name": "sync_peers", "description": "List P2P peers", "params": []},
+    {"name": "sync_add_peer", "description": "Add P2P peer", "params": ["peer_url"]},
+    {"name": "sync_broadcast", "description": "Broadcast memory to peers", "params": ["id"]},
+    {"name": "sync_merge", "description": "Merge CRDT from peer", "params": ["crdt_data"]},
+    {"name": "config_get", "description": "Get config", "params": []},
+    {"name": "config_set", "description": "Set config value", "params": ["key","value"]},
+    {"name": "health_check", "description": "Health check", "params": []},
+]
+
+def get_tools_schema():
+    return TOOLS

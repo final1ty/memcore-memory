@@ -1,0 +1,24 @@
+{
+  "name": "mnemosyne-memory",
+  "version": "1.0.0",
+  "description": "Production-grade lifelong memory with AES-256-GCM, 4-tier Ebbinghaus, 6-way hybrid MRR@10=0.85, P2P sync, KG",
+  "mcp_version": "1.0",
+  "transport": "stdio",
+  "command": "mnem",
+  "args": ["server", "mcp"],
+  "tools_count": 33,
+  "tools": [
+    {"name": "memory_add"}, {"name": "memory_get"}, {"name": "memory_delete"},
+    {"name": "memory_update"}, {"name": "memory_recall"}, {"name": "memory_search_bm25"},
+    {"name": "memory_search_vector"}, {"name": "memory_search_graph"},
+    {"name": "memory_search_temporal"}, {"name": "memory_list"},
+    {"name": "memory_list_all"}, {"name": "memory_promote"}, {"name": "memory_demote"},
+    {"name": "memory_touch"}, {"name": "memory_forget"}, {"name": "memory_consolidate"},
+    {"name": "memory_stats"}, {"name": "memory_export"}, {"name": "memory_import"},
+    {"name": "kg_add_entity"}, {"name": "kg_add_relation"}, {"name": "kg_traverse"},
+    {"name": "kg_get_related"}, {"name": "kg_list_entities"}, {"name": "kg_delete_entity"},
+    {"name": "sync_status"}, {"name": "sync_peers"}, {"name": "sync_add_peer"},
+    {"name": "sync_broadcast"}, {"name": "sync_merge"}, {"name": "config_get"},
+    {"name": "config_set"}, {"name": "health_check"}
+  ]
+}

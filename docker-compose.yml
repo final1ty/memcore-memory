@@ -1,0 +1,36 @@
+
+version: "3.9"
+services:
+  mnemosyne:
+    build: .
+    image: mnemosyne-memory:1.0.0
+    container_name: mnemosyne
+    ports:
+      - "8000:8000"   # REST API
+      - "7742:7742"   # P2P sync
+    volumes:
+      - mnem_data:/data
+    environment:
+      - MNEM_DATA_DIR=/data
+      - MNEM_LOG_LEVEL=INFO
+      - MNEM_P2P_PORT=7742
+      - MNEM_EMBEDDING_DIM=768
+      - MNEM_ENCRYPTION_ENABLED=true
+    restart: unless-stopped
+
+  mnemosyne-peer2:
+    build: .
+    ports:
+      - "8001:8000"
+      - "7743:7742"
+    volumes:
+      - mnem_data_peer2:/data
+    environment:
+      - MNEM_DATA_DIR=/data
+      - MNEM_P2P_PEERS=["ws://mnemosyne:7742"]
+    depends_on:
+      - mnemosyne
+
+volumes:
+  mnem_data:
+  mnem_data_peer2:

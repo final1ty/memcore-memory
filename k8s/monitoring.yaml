@@ -1,0 +1,31 @@
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mnemosyne-dashboard
+  namespace: mnemosyne
+data:
+  dashboard.json: |
+    {
+      "panels": [
+        {"title": "MRR@10", "targets": [{"expr": "mnemosyne_retrieval_mrr"}]},
+        {"title": "Tier counts", "targets": [{"expr": "mnemosyne_tier_count"}]},
+        {"title": "Ebbinghaus retention avg", "targets": [{"expr": "avg(mnemosyne_retention)"}]},
+        {"title": "P2P gossip lag", "targets": [{"expr": "mnemosyne_p2p_lag_seconds"}]},
+        {"title": "Encryption ops", "targets": [{"expr": "rate(mnemosyne_encrypt_total[5m])"}]}
+      ]
+    }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mnemosyne-monitor
+  namespace: mnemosyne
+spec:
+  selector:
+    matchLabels:
+      app: mnemosyne
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 15s

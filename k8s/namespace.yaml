@@ -1,0 +1,7 @@
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mnemosyne
+  labels:
+    app: mnemosyne-memory
