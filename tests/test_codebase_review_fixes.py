@@ -22,6 +22,13 @@ from memcore_memory.storage.vector_store import VectorStore
 from memcore_memory.sync.crdt import MemoryCRDT
 
 
+@pytest.fixture
+async def store(tmp_path):
+    s = EncryptedStore(tmp_path / "review.db", AES256GCM(AES256GCM.generate_key()))
+    await s.init()
+    return s
+
+
 # --- vector store ---------------------------------------------------------
 
 async def test_vectors_survive_a_restart_without_hnswlib(tmp_path):
@@ -203,3 +210,57 @@ def test_sync_merge_no_longer_claims_to_have_merged(client):
     r = client.post("/sync/merge", json={"registers": {"a": {"value": 1, "ts": 1, "node": "x"}}})
     assert r.status_code == 501
     assert r.json()["status"] == "not_implemented"
+
+
+# --- retrieval quality ----------------------------------------------------
+
+from memcore_memory.core.tiers import MemoryItem, Tier
+from memcore_memory.retrieval.retrievers.bm25 import BM25Retriever, tokenize
+
+
+def test_tokenizer_strips_punctuation():
+    """`content.lower().split()` made "WireGuard:" and "master.key" whole tokens,
+    so no plain query term could match them - BM25 returned nothing for words
+    plainly present in the corpus."""
+    assert tokenize("WireGuard: two peers, master.key rotated!") == [
+        "wireguard", "two", "peers", "master", "key", "rotated"]
+
+
+def test_tokenizer_keeps_accented_words_whole():
+    assert tokenize("Telepítés sikeres") == ["telepítés", "sikeres"]
+
+
+async def test_bm25_finds_a_term_that_is_followed_by_punctuation(store):
+    wanted = MemoryItem(content="NOSTRO HALOZAT - WireGuard: two separate instances.",
+                        tier=Tier.EPISODIC)
+    other = MemoryItem(content="Something else entirely about printers.", tier=Tier.EPISODIC)
+    for item in (wanted, other):
+        await store.put(item)
+
+    hits = await BM25Retriever(store).retrieve("WireGuard", k=5)
+    assert [h["id"] for h in hits] == [wanted.id]
+
+
+async def test_query_independent_retrievers_cannot_inject_their_own_candidates(store):
+    """TemporalRetriever and ImportanceRetriever rank the whole store identically
+    for every query. Fused as equals, the newest high-importance memory came back
+    top of every single search."""
+    from memcore_memory.storage.vector_store import VectorStore
+    from memcore_memory.graph.kg import KnowledgeGraph
+    from memcore_memory.retrieval.hybrid import HybridRetriever
+
+    match = MemoryItem(content="the quick brown fox", tier=Tier.EPISODIC,
+                       metadata={"importance": 0.1})
+    loud = MemoryItem(content="totally unrelated content", tier=Tier.SEMANTIC,
+                      metadata={"importance": 0.99})
+    for item in (match, loud):
+        await store.put(item)
+
+    kg = KnowledgeGraph(store.db_path.with_suffix(".kg2.db"), store.cipher)
+    await kg.init()
+    retriever = HybridRetriever(store, VectorStore(store.db_path.with_suffix(".vec"), dim=8), kg)
+    results = await retriever.search("quick brown fox", k=5)
+
+    assert results, "the lexical match should be found"
+    assert results[0]["id"] == match.id
+    assert loud.id not in [r["id"] for r in results]

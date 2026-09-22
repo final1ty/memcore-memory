@@ -7,6 +7,41 @@ from .retrievers.temporal import TemporalRetriever
 from .retrievers.importance import ImportanceRetriever
 from .retrievers.metadata import MetadataRetriever
 
+import sys
+
+# Which retrievers actually look at the query. The other two rank the whole store
+# by recency and importance and return the same order for every search.
+QUERY_DEPENDENT = {'vector', 'bm25', 'graph', 'metadata'}
+
+# Weights from the project's grid search on LoCoMo + LongMemEval, which was run
+# with real BGE embeddings.
+DEFAULT_WEIGHTS = {
+    'vector': 0.35,
+    'bm25': 0.25,
+    'graph': 0.15,
+    'temporal': 0.10,
+    'importance': 0.10,
+    'metadata': 0.05,
+}
+
+
+def is_semantic(embedder) -> bool:
+    """True when the embedder produces meaning-bearing vectors.
+
+    LocalHashEmbedder hashes text to a deterministic random vector: identical
+    strings match and everything else is noise, so similarity carries no meaning.
+    BGEEmbedder degrades to it when sentence-transformers is missing while keeping
+    its model_name, so the loaded model is what to check, not the label.
+    """
+    if embedder is None:
+        return False
+    if type(embedder).__name__ == "LocalHashEmbedder":
+        return False
+    if hasattr(embedder, "_model"):
+        return getattr(embedder, "_model") is not None
+    return True
+
+
 class HybridRetriever:
     def __init__(self, store, vector_store, kg, embedder=None):
         self.store = store
@@ -16,14 +51,20 @@ class HybridRetriever:
         self.temporal = TemporalRetriever(store)
         self.importance = ImportanceRetriever(store)
         self.metadata = MetadataRetriever(store)
-        self.weights = {
-            'vector': 0.35,
-            'bm25': 0.25,
-            'graph': 0.15,
-            'temporal': 0.10,
-            'importance': 0.10,
-            'metadata': 0.05
-        }
+        self.weights = dict(DEFAULT_WEIGHTS)
+        # Those weights assume the vector arm means something. Under the hash
+        # fallback it is noise, and it carries the largest weight of the six - so
+        # letting it vote actively buries the lexical matches BM25 found. Give its
+        # share to the retrievers that still work.
+        if not is_semantic(embedder):
+            share = self.weights.pop('vector')
+            total = sum(self.weights.values())
+            for name in self.weights:
+                self.weights[name] += share * self.weights[name] / total
+            self.weights['vector'] = 0.0
+            print("[retrieval] embedder is not semantic (hash fallback): vector weight "
+                  "set to 0 and redistributed. Install sentence-transformers to use it.",
+                  file=sys.stderr)
         self.rrf_k = 60
 
     def _rrf(self, ranked_lists: List[List[Dict]]) -> Dict[str, float]:
@@ -56,6 +97,21 @@ class HybridRetriever:
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         lists = [r for r in results if isinstance(r, list)]
+
+        # TemporalRetriever and ImportanceRetriever never look at the query: they
+        # rank the whole store by recency and by importance, identically for every
+        # search. Fused as equals they contributed ~31% of the weight in favour of
+        # the same few documents no matter what was asked, which is why the newest
+        # high-importance memory came back top of every query. They are priors, so
+        # let them reorder what the query-dependent retrievers actually found
+        # rather than nominate candidates of their own.
+        candidates = {item['id'] for lst in lists for item in lst
+                      if item['source'] in QUERY_DEPENDENT}
+        if candidates:
+            lists = [[item for item in lst
+                      if item['source'] in QUERY_DEPENDENT or item['id'] in candidates]
+                     for lst in lists]
+
         fused = self._rrf(lists)
         sorted_ids = sorted(fused.items(), key=lambda x: x[1], reverse=True)[:k*2]
         final = []

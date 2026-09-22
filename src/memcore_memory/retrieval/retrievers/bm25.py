@@ -1,6 +1,17 @@
 
+import re
 from typing import List, Dict
 from rank_bm25 import BM25L
+
+# \w is unicode-aware, so Hungarian accents survive; the point is that punctuation
+# does not become part of a token. Splitting on whitespace alone made "WireGuard:"
+# and "master.key" tokens in their own right, which no plain query term could ever
+# match - so BM25 returned nothing for terms that were plainly in the corpus.
+_TOKEN = re.compile(r'\w+', re.UNICODE)
+
+
+def tokenize(text: str) -> List[str]:
+    return _TOKEN.findall(text.lower())
 
 class BM25Retriever:
     """Lexical retrieval over the decrypted corpus.
@@ -22,7 +33,7 @@ class BM25Retriever:
         # Rebuilding on every query is wasteful; re-index only when the corpus changes.
         key = (len(items), tuple(m.id for m in items))
         if key != self._cache_key:
-            self._bm25 = BM25L([m.content.lower().split() for m in items])
+            self._bm25 = BM25L([tokenize(m.content) for m in items])
             self._items = items
             self._cache_key = key
         return self._bm25
@@ -32,6 +43,6 @@ class BM25Retriever:
         if not all_items:
             return []
         bm25 = self._index(all_items)
-        scores = bm25.get_scores(query.lower().split())
+        scores = bm25.get_scores(tokenize(query))
         scored = sorted(zip(all_items, scores), key=lambda x: x[1], reverse=True)
         return [{'id': m.id, 'score': float(s), 'source': 'bm25'} for m, s in scored[:k] if s > 0]
