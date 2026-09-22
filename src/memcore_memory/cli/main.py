@@ -222,6 +222,30 @@ def system_reindex_blind():
         print(f"Reindexed {count} memories")
     run_async(_run())
 
+@system_app.command("reindex-vectors")
+def system_reindex_vectors():
+    """Rebuild the vector store from the embeddings already in the database.
+
+    Needed once for any store that ran while VectorStore never persisted anything
+    (it only saved when hnswlib was installed, which it is not here). The
+    embeddings themselves were safe in SQLite all along; only the vector index
+    was being thrown away at every restart.
+    """
+    async def _run():
+        mem = await get_memory_system()
+        items = await mem.store.list_all()
+        restored = skipped = 0
+        for item in items:
+            if not item.embedding:
+                skipped += 1
+                continue
+            await mem.vectors.add(item.id, item.embedding,
+                                  {'tier': item.tier.value, 'content': item.content[:500]})
+            restored += 1
+        print(f"Reindexed {restored} vectors ({skipped} memories had no stored embedding)")
+        print(f"Vector sidecar: {mem.vectors.sidecar_path}")
+    run_async(_run())
+
 @system_app.command("health")
 def system_health():
     print("{'status':'ok','encryption':'AES-256-GCM','tiers':4,'retrieval':'6-way hybrid MRR@10=0.85','p2p':'enabled','kg':'enabled'}")
@@ -238,7 +262,10 @@ def server_start(port: int = 8000, host: str = "0.0.0.0"):
     mem = run_async(get_memory_system())
     from ..api.rest import create_app
     app_fast = create_app(mem)
-    print(f"Starting REST API on {host}:{port} + MCP server + P2P node {settings.p2p_port}")
+    # Only the REST API starts here. This used to also claim an MCP server and a
+    # P2P node on {settings.p2p_port}; neither was ever started, and nothing has
+    # ever listened on that port. Use `server mcp` for MCP.
+    print(f"Starting REST API on {host}:{port} (MCP: `memcore server mcp`; P2P: not implemented)")
     uvicorn.run(app_fast, host=host, port=port)
 
 @api_app.command("mcp")

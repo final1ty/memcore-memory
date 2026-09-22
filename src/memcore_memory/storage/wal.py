@@ -1,5 +1,5 @@
 
-import json, time
+import json, sys, time
 from pathlib import Path
 
 class WAL:
@@ -20,6 +20,10 @@ class WAL:
             for line in f:
                 try:
                     entries.append(json.loads(line))
-                except:
+                except json.JSONDecodeError:
+                    # A torn final line is expected after a crash - that is what a
+                    # write-ahead log is for. Skip it, but say so: a bare `except`
+                    # here also swallowed KeyboardInterrupt and hid real corruption.
+                    print(f"[wal] skipping unparseable entry in {self.path}", file=sys.stderr)
                     continue
         return entries

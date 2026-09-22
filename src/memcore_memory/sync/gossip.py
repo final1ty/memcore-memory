@@ -1,5 +1,5 @@
 
-import asyncio, json, random
+import asyncio, json, random, sys
 from typing import List
 
 class GossipProtocol:
@@ -19,7 +19,7 @@ class GossipProtocol:
             try:
                 await self._sync_with_peer(peer)
             except Exception as e:
-                print(f"[gossip] failed sync with {peer}: {e}")
+                print(f"[gossip] failed sync with {peer}: {e}", file=sys.stderr)
 
     async def _sync_with_peer(self, peer_url: str):
         import httpx

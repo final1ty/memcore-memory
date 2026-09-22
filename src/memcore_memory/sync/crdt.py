@@ -55,19 +55,47 @@ class MemoryCRDT:
 
     def merge(self, other: 'MemoryCRDT') -> 'MemoryCRDT':
         merged = MemoryCRDT(self.node_id)
-        all_ids = set(self.registers) | set(other.registers)
-        for mid in all_ids:
+        merged.tombstones = self.tombstones.merge(other.tombstones)
+        for mid in set(self.registers) | set(other.registers):
             r1 = self.registers.get(mid)
             r2 = other.registers.get(mid)
-            if r1 and r2:
-                merged.registers[mid] = r1.merge(r2)
-            else:
-                merged.registers[mid] = r1 or r2
-        merged.tombstones = self.tombstones.merge(other.tombstones)
+            winner = r1.merge(r2) if (r1 and r2) else (r1 or r2)
+            # A delete observed after the last write wins. Without this, merge
+            # ignored tombstones entirely and every deleted memory came straight
+            # back on the next sync.
+            deleted_at = merged.tombstones.adds.get(mid, 0.0)
+            if merged.tombstones.contains(mid) and deleted_at > winner.timestamp:
+                continue
+            merged.registers[mid] = winner
         return merged
+
+    def live_ids(self):
+        """Ids that survive their tombstones - what a peer should actually hold."""
+        return [mid for mid, reg in self.registers.items()
+                if not (self.tombstones.contains(mid)
+                        and self.tombstones.adds.get(mid, 0.0) > reg.timestamp)]
 
     def to_dict(self):
         return {
+            'node': self.node_id,
             'registers': {k: {'value': v.value, 'ts': v.timestamp, 'node': v.node_id} for k, v in self.registers.items()},
             'tombstones': {'adds': self.tombstones.adds, 'removes': self.tombstones.removes}
         }
+
+    @classmethod
+    def from_dict(cls, data: dict, node_id: str = None) -> 'MemoryCRDT':
+        """Inverse of to_dict. Without it a received payload could not be merged at
+        all, which is why the sync endpoints only ever pretended to."""
+        crdt = cls(node_id or data.get('node') or 'unknown')
+        for mid, reg in (data.get('registers') or {}).items():
+            crdt.registers[mid] = LWWRegister(
+                value=reg.get('value'),
+                timestamp=float(reg.get('ts', 0.0)),
+                node_id=reg.get('node', ''),
+            )
+        tomb = data.get('tombstones') or {}
+        crdt.tombstones = ORSet(
+            adds={k: float(v) for k, v in (tomb.get('adds') or {}).items()},
+            removes={k: float(v) for k, v in (tomb.get('removes') or {}).items()},
+        )
+        return crdt

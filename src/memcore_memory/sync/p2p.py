@@ -1,5 +1,5 @@
 
-import asyncio, uuid, json
+import asyncio, uuid, json, sys
 from pathlib import Path
 from typing import List
 from .crdt import MemoryCRDT
@@ -19,7 +19,7 @@ class P2PNode:
     async def start(self):
         # start websocket server for sync
         self.server = await websockets.serve(self._handler, "0.0.0.0", self.port)
-        print(f"[P2P] Node {self.node_id} listening on {self.port}")
+        print(f"[P2P] Node {self.node_id} listening on {self.port}", file=sys.stderr)
         asyncio.create_task(self.gossip.gossip_loop())
 
     async def _handler(self, ws):

@@ -1,5 +1,6 @@
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from .schemas import MemoryAddRequest, RecallRequest, RecallResponse, MemoryAddResponse, HealthResponse, MCPCallRequest
 from ..core.tiers import Tier
 from ..mcp.server import HANDLERS, SERVER_NAME, SERVER_VERSION, ToolError
@@ -8,6 +9,13 @@ from collections import Counter
 
 def create_app(memory_system):
     app = FastAPI(title="Mnemosyne Memory API", version="1.0.0", description="Local-first encrypted lifelong memory REST API")
+
+    # The limiter existed but was never attached to an app, so the documented
+    # per-IP limits had never applied to a single request.
+    from ..config import settings
+    if getattr(settings, "rate_limit_enabled", True):
+        from .rate_limit import rate_limit_middleware
+        app.middleware("http")(rate_limit_middleware)
 
     @app.post("/memory", response_model=MemoryAddResponse)
     async def add_memory(req: MemoryAddRequest):
@@ -56,10 +64,22 @@ def create_app(memory_system):
         c = Counter([i.tier.value for i in all_items])
         return HealthResponse(status="ok", version="1.0.0", tier_counts=dict(c))
 
-    @app.post("/sync/merge")
+    @app.post("/sync/merge", status_code=501)
     async def sync_merge(crdt_data: dict):
-        # merge CRDT
-        return {"status": "merged", "node": "local"}
+        """Not implemented. It used to answer {"status": "merged"} and merge nothing.
+
+        The CRDT primitives are real and tested (sync/crdt.py), but nothing wires a
+        received payload into this instance's store, and doing so would make this an
+        unauthenticated write endpoint: anything on the LAN could inject memories.
+        That needs an auth model first, so this reports the truth instead of a
+        success a caller would believe.
+        """
+        return JSONResponse(status_code=501, content={
+            "status": "not_implemented",
+            "detail": "P2P sync is not wired up. /sync/merge accepts no data and merges "
+                      "nothing; it previously reported success regardless. See CLAUDE.md.",
+            "received_registers": len((crdt_data or {}).get("registers") or {}),
+        })
 
     @app.get("/kg/traverse/{entity}")
     async def kg_traverse(entity: str, depth: int = 2, limit: int = 20):

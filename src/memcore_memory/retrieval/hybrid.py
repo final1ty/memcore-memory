@@ -27,14 +27,21 @@ class HybridRetriever:
         self.rrf_k = 60
 
     def _rrf(self, ranked_lists: List[List[Dict]]) -> Dict[str, float]:
-        scores = {}
+        """Weighted Reciprocal Rank Fusion: sum of w / (k + rank) per retriever.
+
+        This used to be `rrf_score * 0.6 + item['score'] * 0.4 * w`, which had two
+        problems. The rank term carried no weight at all, so the documented weights
+        (vector 0.35, bm25 0.25, ...) could only ever nudge the score term - they
+        were very nearly inert. And the score term mixes raw numbers from six
+        retrievers on different scales: cosine similarity in [0,1], unbounded BM25,
+        a recency weight, an importance value. Comparing those directly is exactly
+        what RRF exists to avoid; rank is the only comparable quantity here.
+        """
+        scores: Dict[str, float] = {}
         for lst in ranked_lists:
             for rank, item in enumerate(lst, start=1):
-                mid = item['id']
-                rrf_score = 1.0 / (self.rrf_k + rank)
                 w = self.weights.get(item['source'], 0.1)
-                combined = rrf_score * 0.6 + item['score'] * 0.4 * w
-                scores[mid] = scores.get(mid, 0) + combined
+                scores[item['id']] = scores.get(item['id'], 0.0) + w / (self.rrf_k + rank)
         return scores
 
     async def search(self, query: str, k: int = 10, tier_filter: List[str] = None, metadata_filter: dict = None) -> List[Dict]:
