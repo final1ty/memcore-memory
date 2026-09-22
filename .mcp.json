@@ -3,9 +3,11 @@
     "memcore": {
       "command": "/mnt/nas7/SkyNas/memcore-memory/memcore-memory-1.0.0/.venv/bin/python",
       "args": [
-        "-u", "-m", "memcore_memory.cli.main", "server", "mcp",
-        "--remote", "http://192.168.1.183:8000"
-      ]
+        "-u", "-m", "memcore_memory.cli.main", "server", "mcp"
+      ],
+      "env": {
+        "MNEM_MASTER_PASSWORD": "${MNEM_MASTER_PASSWORD}"
+      }
     }
   }
 }
