@@ -5,6 +5,10 @@ import os, sys, json, getpass
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
 MASTER_PASSWORD_ENV = "MNEM_MASTER_PASSWORD"
+# Deployment marker, deliberately not a MNEM_ setting: it gates whether an
+# unprotected key may be created at all, which is a property of the environment
+# rather than of this application's configuration.
+ENV_VAR = "MEMCORE_ENV"
 
 # An unwrapped master key is exactly one AES-256 key; a password-wrapped one is JSON.
 RAW_KEY_SIZE = 32
@@ -88,6 +92,17 @@ class KeyManager:
         )
 
     def _create(self, password: str = None) -> bytes:
+        # A key written without a password sits on disk in the clear: anyone who can
+        # read the file can read the store. That is a reasonable default for a local
+        # dev box and not one for a deployment, so production refuses it outright.
+        # Only creation is gated - an existing unprotected key still loads, otherwise
+        # setting this would lock a running deployment out of its own data.
+        if not password and os.environ.get(ENV_VAR, "").lower() in ("prod", "production"):
+            raise ValueError(
+                f"master password required: {ENV_VAR}={os.environ[ENV_VAR]} refuses to create an "
+                f"unprotected master key at {self.key_path}. Pass --password or set "
+                f"{MASTER_PASSWORD_ENV}."
+            )
         master_key = AES256GCM.generate_key()
         self.key_path.parent.mkdir(parents=True, exist_ok=True)
         if password:

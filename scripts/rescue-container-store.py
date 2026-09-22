@@ -44,9 +44,27 @@ def parse_args():
     p.add_argument("output_dir", type=Path)
     p.add_argument("--container", default="mnemosyne")
     p.add_argument("--endpoint", default="http://192.168.1.183:8000")
-    p.add_argument("--data-dir", default="/root/.memcore",
-                   help="Path of the store inside the container")
+    p.add_argument("--data-dir", default=None,
+                   help="Store path inside the container (default: probe for it)")
     return p.parse_args()
+
+
+# Where the store has lived, newest layout first. /root/.memcore is where everything
+# ended up while MNEM_DATA_DIR was being ignored; /data is where it belongs. Probing
+# with `ls` rather than assuming, because assuming is what made the first run of this
+# script abort after the deploy had already moved the store.
+CANDIDATE_DIRS = ("/data", "/root/.memcore")
+
+
+def find_data_dir(container: str) -> str:
+    for candidate in CANDIDATE_DIRS:
+        probe = subprocess.run(
+            ["docker", "exec", container, "ls", f"{candidate}/memory.db"],
+            capture_output=True,
+        )
+        if probe.returncode == 0:
+            return candidate
+    sys.exit(f"no memory.db in any of {CANDIDATE_DIRS} inside {container}")
 
 
 def fetch(url, timeout=20):
@@ -63,12 +81,14 @@ async def main():
     live_total = sum(health.get("tier_counts", {}).values())
     print(f"   health {health['status']}, {live_total} memories live")
 
+    data_dir = args.data_dir or find_data_dir(args.container)
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        print(f"== copying the database out of {args.container}")
+        print(f"== copying the database out of {args.container}:{data_dir}")
         for name in ("memory.db", "memory.kg.db"):
             subprocess.run(
-                ["docker", "cp", f"{args.container}:{args.data_dir}/{name}", str(tmp / name)],
+                ["docker", "cp", f"{args.container}:{data_dir}/{name}", str(tmp / name)],
                 check=(name == "memory.db"),
             )
 

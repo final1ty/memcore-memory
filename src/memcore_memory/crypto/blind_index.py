@@ -25,7 +25,14 @@ class BlindIndex:
     def _tokenize(self, text: str) -> Set[str]:
         # Normalize: lower, alphanumeric, min 3 chars, stopwords removed
         text = text.lower()
-        tokens = re.findall(r'[a-z0-9]{3,}', text)
+        # This pattern MUST stay a raw string. It was written as '\\b[a-z0-9]{3,}\\b'
+        # without the r prefix, so Python read each \\b as a backspace (0x08) and the
+        # regex went looking for a literal control character. It matched nothing, ever:
+        # every blind index ever written was an empty list, which is why encrypted
+        # search silently returned no results. The \\b is dropped deliberately -
+        # [a-z0-9]{3,} already breaks on any non-alphanumeric, and word boundaries
+        # would stop "user_name" from yielding "user" and "name".
+        tokens = re.findall(r'[a-z0-9]{3,}', text)
         stopwords = {'the','and','for','are','but','not','you','all','can','her','was','one','our','out','day','get','has','him','his','how','its','may','new','now','old','see','two','way','who','boy','did','she','use','your','this','that','with','have','from','they','will','what','when','where','would','there','their'}
         return {t for t in tokens if t not in stopwords}
 

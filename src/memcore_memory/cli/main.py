@@ -208,6 +208,20 @@ def system_stats():
         print(f"Ebbinghaus curve: R=exp(-t/S) S_strength x log(rehearsals) x importance")
     run_async(_run())
 
+@system_app.command("reindex-blind")
+def system_reindex_blind():
+    """Recompute the blind index for every stored memory.
+
+    Needed once for any store written before the index worked - the tokenizer
+    pattern was broken from the start, so those rows carry an empty index and
+    never match an encrypted search.
+    """
+    async def _run():
+        mem = await get_memory_system()
+        count = await mem.store.rebuild_blind_index()
+        print(f"Reindexed {count} memories")
+    run_async(_run())
+
 @system_app.command("health")
 def system_health():
     print("{'status':'ok','encryption':'AES-256-GCM','tiers':4,'retrieval':'6-way hybrid MRR@10=0.85','p2p':'enabled','kg':'enabled'}")

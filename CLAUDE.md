@@ -94,6 +94,20 @@ The exposure grew a great deal before it was closed. At 01:45 the container held
 
 Fixed in [crypto/key_manager.py](src/memcore_memory/crypto/key_manager.py): `load_or_create` now creates a key **only when no key file exists**, and tells raw from wrapped by *content* (JSON with `salt`/`nonce`/`ct` → unwrap; exactly 32 bytes → use as-is; anything else → raise `MasterKeyUnreadable` rather than overwrite). New key files are also written `0600` instead of `0644`. Covered by [tests/test_key_persistence.py](tests/test_key_persistence.py) — the load-twice tests are the point; **never** reintroduce a size-based branch.
 
+**Bug: the blind index never indexed anything — one missing `r` prefix.** (Found and fixed 2026-09-22.)
+
+`BlindIndex._tokenize` matched with `'\b[a-z0-9]{3,}\b'` written as a normal string, so Python turned each `\b` into a **backspace character (0x08)** and the regex went looking for a literal control byte. No real text contains one, so the tokenizer returned an empty set for every input ever passed to it. `compute_index()` returned `[]`, `search_query_hmacs()` returned `[]`, and encrypted search matched nothing — silently, with no error anywhere. `cat` renders 0x08 invisibly, which is why the line reads as correct in a terminal; `grep -P '\x08'` or a hex dump is what shows it.
+
+Fixed with a raw string, and the `\b` was dropped on purpose: `[a-z0-9]{3,}` already breaks on every non-alphanumeric, while word boundaries would stop `user_name` from yielding `user` and `name`. A scan of the whole source found no other control bytes and no other non-raw regex literal.
+
+The storage half was missing too: there was no column to put an index in and no way to search one. [storage/encrypted_sqlite.py](src/memcore_memory/storage/encrypted_sqlite.py) now has `blind_index_json` (added by `ALTER TABLE` for existing stores), computes it on `put`, and offers `search_by_blind_index()` ranked by term overlap plus `rebuild_blind_index()` for rows written while the tokenizer was broken — `memcore system reindex-blind` runs it. The index key is derived from the content key via `AES256GCM.derive_subkey`, never reused, per OWASP. Live store reindexed 2026-09-22: 120/120 rows carry a non-empty index and keyword search over ciphertext works.
+
+Note the tradeoff this feature makes: the HMACs live in a plaintext column, so anyone holding the database learns which rows share keywords, though not what they are. Covered by [tests/test_blind_index_and_decay.py](tests/test_blind_index_and_decay.py).
+
+**Also fixed 2026-09-22, same pass:**
+- `ForgettingCurve` gained `decay_model="power_law"` with `power_d` (Wixted & Ebbesen's fit, which keeps a long tail where the exponential collapses) and `rehearse(feedback=)` to scale how much a recall counts. `feedback=1.0` reproduces the original `S = S*1.6 + 0.5` exactly. **Both new fields are persisted** — `to_dict`/`from_dict` on the curve are now the single serialization point for both the SQLite and Postgres backends, because leaving them out would silently turn a power-law memory exponential on the next read, which is the rehearsal bug all over again.
+- `KeyManager` refuses to *create* an unprotected key when `MEMCORE_ENV=prod`. Creation only: gating loads too would strand a running deployment from its own data, and the SkyNAS container relies on exactly such a key.
+
 **Bug: `MNEM_*` env vars are silently ignored — data never lands in the named volume.**
 
 `config.py` had `env_prefix = "MEMCORE_"`, but `Dockerfile`/`docker-compose.yml` (and every doc/example) set `MNEM_DATA_DIR`, `MNEM_ENCRYPTION_ENABLED`, etc. Since pydantic-settings only maps env vars matching the configured prefix, `MNEM_DATA_DIR=/data` was never read, and `Settings.data_dir` fell back to its default `Path.home() / ".memcore"`. Inside the container that resolves to `/root/.memcore` (container runs as root) — **not** `/data`, which is where the named volume `memcore-memory-100_mnem_data` is mounted. Verified by `docker exec mnemosyne env` (shows `MNEM_DATA_DIR=/data`) vs `docker exec mnemosyne ls $HOME/.memcore` (shows the real, live `memory.db`) vs the volume's actual host directory (`/var/lib/docker/volumes/.../​_data`, empty except `.`/`..`).
@@ -198,12 +212,7 @@ Switched to `BM25L` in [retrieval/retrievers/bm25.py](src/memcore_memory/retriev
 .venv/bin/python -m pytest tests/ -q        # pytest + pytest-asyncio installed into .venv 2026-09-22
 ```
 
-Current state: **53 passed, 4 failed, 2 skipped.** The 4 failures are all in `tests/test_excellent.py` and **pre-date this work** (verified by stashing every change and re-running). They assert features that were never implemented, not regressions:
-
-- `test_ebbinghaus_power_law` — passes `ForgettingCurve(decay_model=...)`; no such parameter exists.
-- `test_encrypted_store_blind_index` — calls `EncryptedStore.search_by_blind_index()`; no such method.
-- `test_blind_index` — expects the blind index to return matches; it returns empty.
-- `test_key_manager_enforce_password` — expects `MEMCORE_ENV=prod` to force a password on key *creation*; no such enforcement exists. Worth implementing, but it would refuse to create the unprotected keys the running container currently relies on, so it needs a deliberate decision rather than a drive-by fix.
+Current state: **75 passed, 0 failed, 2 skipped.** The four long-standing `test_excellent.py` failures were fixed on 2026-09-22 rather than left as known-bad; see "Known issues" for the blind-index one, which turned out to be a real and total feature failure rather than a missing method.
 
 `tests/conftest.py` has an autouse `isolate_data_dir` fixture. It exists because the suite previously ran against the real `~/.memcore` — `test_memory.py` called `create_memory_system()` with no isolation and was writing test memories into the live encrypted store. **Never remove it.**
 

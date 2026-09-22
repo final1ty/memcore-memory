@@ -115,12 +115,9 @@ class PostgresStore:
     def _row_to_item(self, row: MemoryRow) -> MemoryItem:
         content = self._dec(row.nonce, row.content_enc)
         metadata = json.loads(self._dec(row.meta_nonce, row.metadata_enc))
-        f = json.loads(row.forgetting_json) if row.forgetting_json else {}
-        forgetting = ForgettingCurve(
-            strength=f.get("strength", 1.0),
-            last_access=f.get("last_access", row.timestamp),
-            rehearsals=f.get("rehearsals", 0),
-            importance=f.get("importance", 0.5)
+        forgetting = ForgettingCurve.from_dict(
+            json.loads(row.forgetting_json) if row.forgetting_json else {},
+            default_last_access=row.timestamp,
         )
         entities = json.loads(row.entities_json) if row.entities_json else []
         # embedding is already list
@@ -143,12 +140,7 @@ class PostgresStore:
                 existing = await sess.get(MemoryRow, item.id)
                 c_nonce, c_ct = self._enc(item.content)
                 m_nonce, m_ct = self._enc(json.dumps(item.metadata))
-                forgetting_json = json.dumps({
-                    "strength": item.forgetting.strength,
-                    "last_access": item.forgetting.last_access,
-                    "rehearsals": item.forgetting.rehearsals,
-                    "importance": item.forgetting.importance
-                })
+                forgetting_json = json.dumps(item.forgetting.to_dict())
                 entities_json = json.dumps(item.entities)
 
                 if existing:
