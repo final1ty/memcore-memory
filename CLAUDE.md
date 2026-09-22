@@ -45,11 +45,12 @@ SkyNAS host
 - Host: SkyNAS, HP EliteDesk 840 G5, Ubuntu, LAN IP `192.168.1.183` (confirmed via `ip addr` on host).
 - Container `mnemosyne` (image `mnemosyne-memory:1.0.0`) — **running**, ports `8000` (REST) and `7742` (P2P) both bound, `restart: unless-stopped`. Confirmed via `docker ps`.
 - Volume: `memcore-memory-100_mnem_data` (confirmed via `docker volume ls`), mounted at `/data` in the container (confirmed via `docker inspect`). A stale `memcore-memory-100_mnem_data_peer2` volume also exists from an earlier two-peer compose setup that has since been removed from `docker-compose.yml` (uncommitted working-tree change).
-- `GET http://192.168.1.183:8000/health` → `{"status":"ok","version":"1.0.0","tier_counts":{"working":1}}` — one memory currently in the `working` tier. `POST /recall {"query":"Docker"}` correctly returns that memory.
-- **There are three separate, non-synced SQLite stores on this host** — see "Known issues" below for why, and don't assume they contain the same data:
-  1. `/root/.memcore/` **inside the `mnemosyne` container's writable layer** — this is what the REST API on :8000 serves right now. `memory.db` = 28672 bytes, `master.key` = 32 bytes (unprotected, no password). ⚠️ **Its on-disk key no longer decrypts its own database** — see the master-key bug. The running process still holds the correct key in memory; nothing else can read this store. Use the recovered copy under `backups/20260922-recovered-store/` instead.
-  2. `/var/lib/docker/volumes/memcore-memory-100_mnem_data/_data` — the named volume that's *supposed* to hold the data. Currently **empty**. Root-owned, so a host process can't read it even once it's populated; that's why MCP goes through the REST bridge.
-  3. `/home/skynas/.memcore/` — a third copy created when the CLI (`.venv/bin/memcore ...`) is run directly on the host outside the container. `memory.db` = 45056 bytes, `master.key` = 187 bytes (password-protected, Argon2id-wrapped). Last written 2026-09-21 04:48, ~18h before the container store. Not touched by the REST API at all, and **not** what any MCP client should be pointed at.
+- `GET http://192.168.1.183:8000/health` → `{"status":"ok","version":"1.0.0","tier_counts":{"working":7,"episodic":100,"semantic":13}}` — 120 memories as of 2026-09-22 16:40. Note `GET /memories` defaults to `limit=50` and cuts content at 500 characters; use `GET /memory/{id}` whenever full content matters.
+- **There are two separate, non-synced SQLite stores on this host.** Don't assume they hold the same data — as of 2026-09-22 16:40 they do not:
+  1. **The volume** `memcore-memory-100_mnem_data`, mounted at `/data` — what the REST API on :8000 serves, 120 memories, `master.key` 32 bytes (unprotected, no password). Since the 16:39 deploy this is the real store: the container no longer has a `/root/.memcore` at all, so recreation and `tar`-based backups finally cover the data. The host directory is root-owned, so a host process still can't open it directly — that's why MCP has a REST bridge.
+  2. `/home/skynas/.memcore/` — a separate store used when the CLI (`.venv/bin/memcore ...`) runs directly on the host. 124 memories, `master.key` 187 bytes (password-protected, Argon2id-wrapped). [scripts/sync-rest-to-local.py](scripts/sync-rest-to-local.py) copies REST records into it, matching on exact full content, but the counts still differ and neither is a superset. `.mcp.json` currently points MCP clients here.
+
+  A third store used to exist — `/root/.memcore` in the container's writable layer — and was where everything actually lived while `MNEM_DATA_DIR` was being ignored. The deploy moved its contents into the volume and it is gone.
 - Windows bridge (`C:\Users\A\memcore_remote_mcp.py` → Claude Desktop MCP entry `memcore-skynas`, 4 tools) is **not verifiable from this host** — this session has no access to the Windows filesystem. Take its config on faith until confirmed from the Windows side.
 - Config snapshot: [.claude/memcore.memory.json](.claude/memcore.memory.json).
 
@@ -87,7 +88,9 @@ It hid perfectly. The process doing the overwrite kept the new key in memory and
 
 It fired on the SkyNAS container on 2026-09-22: a `docker exec mnemosyne python -c "... create_memory_system() ..."` run during an audit rotated `/root/.memcore/master.key` at 23:40:47 UTC. The REST process kept serving normally from its in-memory copy while its own database was already unreadable on disk. A restart would have lost the data permanently.
 
-**Recovery worked completely**, because only `content` and `metadata` are encrypted — `id`, `tier`, `timestamp`, `forgetting_json`, `entities_json` and `embedding` are plaintext columns. The plaintext of the two encrypted columns was pulled out over the REST API while the old key was still resident, then re-encrypted under a new key with every plaintext column carried across verbatim. Recovered store: `/mnt/nas7/SkyNas/memcore-memory/backups/20260922-recovered-store/`; the pre-recovery copy and the rescued plaintext are in `backups/20260922-014334-container-writable-layer/`.
+**Recovery worked completely**, because only `content` and `metadata` are encrypted — `id`, `tier`, `timestamp`, `forgetting_json`, `entities_json` and `embedding` are plaintext columns. The plaintext of the two encrypted columns was pulled out over the REST API while the old key was still resident, then re-encrypted under a new key with every plaintext column carried across verbatim.
+
+The exposure grew a great deal before it was closed. At 01:45 the container held 1 memory; by 16:30 it held 120 — a full CLAUDE-memory export plus the NOSTRO knowledge base — every one of them written under a key that existed nowhere but in that process's RAM. All 120 were rescued and verified byte-for-byte, then deployed into the volume. [scripts/rescue-container-store.py](scripts/rescue-container-store.py) is that procedure, kept because it is the only way to get data out of a store in this state: `docker cp` gives you the plaintext columns, the running API gives you the encrypted two, and the script re-encrypts the pair under a fresh key.
 
 Fixed in [crypto/key_manager.py](src/memcore_memory/crypto/key_manager.py): `load_or_create` now creates a key **only when no key file exists**, and tells raw from wrapped by *content* (JSON with `salt`/`nonce`/`ct` → unwrap; exactly 32 bytes → use as-is; anything else → raise `MasterKeyUnreadable` rather than overwrite). New key files are also written `0600` instead of `0644`. Covered by [tests/test_key_persistence.py](tests/test_key_persistence.py) — the load-twice tests are the point; **never** reintroduce a size-based branch.
 
@@ -101,21 +104,17 @@ Fixed in [crypto/key_manager.py](src/memcore_memory/crypto/key_manager.py): `loa
 
 **There was a second bug stacked underneath it.** Fixing the prefix alone was *not* enough. `db_path`, `key_path`, `vector_path`, `audit_log_path` and `working_buffer_path` were declared at class scope as `data_dir / "..."`, which pydantic evaluates **once, at class-creation time, against the default `data_dir`**. So even with `MNEM_DATA_DIR=/data` correctly parsed, only `data_dir` moved — every derived path still pointed into `~/.memcore`. Found on 2026-09-22 when a test run against an isolated data dir unexpectedly hit the real `/home/skynas/.memcore/master.key`. Both are now fixed: the paths default to `None` and a `model_validator(mode="after")` resolves them against the effective `data_dir`, with per-path overrides (`MNEM_DB_PATH`, …) still winning. Covered by [tests/test_config_paths.py](tests/test_config_paths.py) — **do not** re-inline those defaults.
 
-**Fixed**: [src/memcore_memory/config.py](src/memcore_memory/config.py) now uses `env_prefix = "MNEM_"` (via `SettingsConfigDict`) and resolves derived paths at runtime. **Not yet deployed** — the running container was built before these fixes, and both remaining steps are "shared resource" writes that this session's auto-mode permissions correctly gate for a human to approve:
+**Fixed and deployed 2026-09-22 16:39.** [config.py](src/memcore_memory/config.py) uses `env_prefix = "MNEM_"` (via `SettingsConfigDict`) and resolves derived paths at runtime. The container was rebuilt and recreated with [scripts/deploy-skynas.sh](scripts/deploy-skynas.sh), which rescues the live contents, stages them into the volume, then rebuilds. Verified after the fact:
 
-```bash
-docker run --rm -v memcore-memory-100_mnem_data:/dst -v /mnt/nas7/SkyNas/memcore-memory/backups/20260922-recovered-store:/src:ro alpine cp -a /src/. /dst/
-```
+- `data_dir: /data`, `db_path: /data/memory.db` — the volume, not `~/.memcore`
+- `/root/.memcore` no longer exists in the container
+- the volume holds `memory.db` (1.2MB), `master.key`, `memory.kg.db` — it was empty for the whole prior life of the deployment
+- **survives a restart**: 120 memories intact, `master.key` unchanged (this was fatal before)
+- the README backup command now produces a 619KB archive instead of an empty one
 
-```bash
-docker compose up -d --build
-```
-
-Stage first, then rebuild — the other order loses the data. Note the source is the **recovered** store, not `/root/.memcore`: the container's on-disk key no longer matches its own database (see the master-key bug above), so copying the writable layer across would move an undecryptable store into the volume. The recovered directory has been verified end-to-end against a container built from this tree — same id, content, tier, timestamp, metadata, embedding and forgetting curve, and `master.key` unchanged across a restart.
+Re-run the deploy script after any change that has to reach the container. It rescues on every run rather than trusting a directory prepared earlier, and refuses to stage a store holding fewer records than the live API reports — the first version of it did trust a fixed path, and would have destroyed 119 of 120 memories.
 
 Beware that the prefix fix activates **every** `MNEM_*` var at once, including ones that were previously inert. `docker-compose.yml` had `MNEM_EMBEDDING_DIM=768`, which would have re-dimensioned the embedder away from the 384-dim vectors already stored; it is now 384, matching `config.py`. Check any new var against the defaults in `config.py` before adding it.
-
-Until both steps are done, treat the container's data as ephemeral and **do not restart or recreate the container** — its in-memory key is the only thing still able to read its own database.
 
 **Bug: rehearsals were persisted and then thrown away on every read.** (Found and fixed 2026-09-22.)
 
@@ -151,13 +150,13 @@ Switched to `BM25L` in [retrieval/retrievers/bm25.py](src/memcore_memory/retriev
 
 ## MCP access for this project
 
-- **From this SkyNAS host / Claude Code sessions here**: [.mcp.json](.mcp.json) runs the stdio MCP server in **bridge mode**, proxying to the container's REST API:
-  ```
-  server mcp --remote http://192.168.1.183:8000
-  ```
-  It talks the real MCP protocol (JSON-RPC 2.0 via the official `mcp` SDK, v2.2.0) and exposes all 29 tools. No master password is needed on the client side — the container unlocked its key at startup.
+- **From this SkyNAS host / Claude Code sessions here**: two modes exist and the choice is a real one, because the two stores hold different data.
 
-  **Do not point it at a local data dir instead.** That was the first attempt and it was wrong: `MNEM_DATA_DIR=/home/skynas/.memcore` opens a *different database* from the one the REST API serves (see the three-stores note above). Both open cleanly, both answer, and they disagree — so the client looks healthy while serving memories nobody wrote. There is no host path that fixes this: the live store is inside the container and its volume is root-owned. One store, reached one way. Covered by [tests/test_mcp_remote.py](tests/test_mcp_remote.py).
+  **Bridge mode** — `server mcp --remote http://192.168.1.183:8000` — proxies to the container, so MCP sees exactly what the REST API serves (120 memories) and needs no master password, since the container unlocked its key at startup. Verified end-to-end: 29 tools, `data_dir=/data`.
+
+  **Local mode** — plain `server mcp` with `$MNEM_MASTER_PASSWORD` — opens `/home/skynas/.memcore` (124 memories) and is what [.mcp.json](.mcp.json) currently selects, as of commit `32906cd`, paired with `scripts/sync-rest-to-local.py` to pull container records down.
+
+  Whichever is configured, **know which store you are talking to**. Both open cleanly, both answer every query, and they disagree — so a client pointed at the wrong one looks perfectly healthy while serving memories nobody wrote. That is what made the first version of `.mcp.json` wrong: it silently switched stores without saying so. Bridge mode is covered by [tests/test_mcp_remote.py](tests/test_mcp_remote.py).
 
   The bridge needs `GET /mcp/tools` and `POST /mcp/call` ([api/rest.py](src/memcore_memory/api/rest.py)), which dispatch through the same `HANDLERS` table as the stdio server — the tool surface can't drift between the two. Against an instance built before those routes existed it exits with "predates the REST-backed MCP bridge", not an obscure failure.
 
