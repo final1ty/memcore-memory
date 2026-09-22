@@ -6,11 +6,11 @@ Production-grade local-first memory system for AI agents. PyPI: `memcore-memory`
 
 - **Tiers** (`core/tiers.py:9-12`, enum `Tier`): `sensory` (30s) → `working` (7±2 items, 20min) → `episodic` (weeks) → `semantic` (years). Promotion to `semantic` happens when `importance > 0.8` and rehearsals pass `semantic_consolidation_threshold`; demotion/eviction driven by TTL + retention.
 - **Ebbinghaus forgetting** (`core/ebbinghaus.py`): `R = exp(-t / S)`, `S = S0 * (1 + log(1+rehearsals)) * (1+importance)`, each rehearsal does `S = S*1.6 + 0.5`.
-- **6-way hybrid retrieval** (`retrieval/hybrid.py` + `retrieval/retrievers/*`), fused via RRF (k=60) + learned weights: vector 0.35, bm25 0.25, graph 0.15, temporal 0.10, importance 0.10, metadata 0.05 → reported **MRR@10 = 0.85** (per README/pyproject; this is the project's own benchmark claim on LoCoMo + LongMemEval, not something re-verified in this session).
+- **6-way hybrid retrieval** (`retrieval/hybrid.py` + `retrieval/retrievers/*`), fused via weighted RRF (k=60): vector 0.35, bm25 0.25, graph 0.15, temporal 0.10, importance 0.10, metadata 0.05. Two caveats that matter in practice: `temporal` and `importance` are query-independent priors and only re-rank what the other four found, and on a deployment without `sentence-transformers` the vector weight is 0 and redistributed. **MRR@10 = 0.85** is the project's own claim on LoCoMo + LongMemEval with real BGE embeddings — not reproducible on the hash fallback, and not re-verified here.
 - **Embeddings**: BGE-small + matryoshka + reranker (`embeddings/`), falls back to a hash embedding if `sentence-transformers` isn't installed.
 - **Storage**: encrypted SQLite (`storage/encrypted_sqlite.py`) + HNSW vector store, WAL for durability, optional Postgres/pgvector backend.
-- **Security**: AES-256-GCM (random 96-bit nonce/record), master key wrapped with Argon2id KEK (memory_cost=64MB, iterations=3), blind-index for encrypted search, audit log, PII filter, rate limiting.
-- **Interfaces**: MCP server (29 tools, stdio, `memcore server mcp`), REST API (FastAPI, `server start`), CLI (`memcore`/`mnem`/`mnemosyne`, 60 commands), Python SDK (sync/async), P2P gossip+CRDT sync (OR-Set + LWW-Register).
+- **Security**: AES-256-GCM (random 96-bit nonce/record), master key wrapped with Argon2id KEK (memory_cost=64MB, iterations=3), blind-index for encrypted search (SDK/CLI only — not exposed over REST or MCP), audit log, PII filter, per-IP rate limiting on the REST API (not on `/mcp/call`).
+- **Interfaces**: MCP server (29 tools, stdio, `memcore server mcp`, local or `--remote` bridge mode), REST API (FastAPI, `server start`), CLI (`memcore`/`mnem`/`mnemosyne`, 60 commands), Python SDK (sync/async). **P2P sync is not implemented**: the CRDT primitives are real and tested, but nothing transports or applies them, `/sync/merge` returns 501, and nothing has ever listened on the published port 7742.
   - Counts corrected 2026-09-22. The manifest previously claimed 33 MCP tools (22 of them were unimplemented no-ops) and "200+" CLI commands (actual: 60, of which 28 are generated stubs that print a placeholder). Don't restore the old numbers.
 - **REST routes** (`api/rest.py`): `POST /memory`, `GET /memory/{id}`, `POST /recall`, `GET /memories`, `DELETE /memory/{id}`, `POST /consolidate`, `POST /forget`, `GET /health`, `POST /sync/merge`, `GET /kg/traverse/{entity}`.
 
@@ -26,7 +26,7 @@ Windows PC (C:\Users\A\)
 SkyNAS — HP EliteDesk 840G5, Ubuntu, 192.168.1.183, Docker enabled
   container `mnemosyne` (mnemosyne-memory:1.0.0)
     - REST API   :8000  ◀── used by the Windows bridge and by curl/CLAUDE.md examples below
-    - P2P gossip :7742  (CRDT sync between peers, not an HTTP endpoint)
+    - P2P gossip :7742  (published by compose, but NOTHING LISTENS - P2P is not implemented)
     restart: unless-stopped
 
   container `skymcp` :8765   — separate, unrelated MCP gateway (/opt/skymcp), listed for
