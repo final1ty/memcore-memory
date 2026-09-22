@@ -94,6 +94,16 @@ The exposure grew a great deal before it was closed. At 01:45 the container held
 
 Fixed in [crypto/key_manager.py](src/memcore_memory/crypto/key_manager.py): `load_or_create` now creates a key **only when no key file exists**, and tells raw from wrapped by *content* (JSON with `salt`/`nonce`/`ct` → unwrap; exactly 32 bytes → use as-is; anything else → raise `MasterKeyUnreadable` rather than overwrite). New key files are also written `0600` instead of `0644`. Covered by [tests/test_key_persistence.py](tests/test_key_persistence.py) — the load-twice tests are the point; **never** reintroduce a size-based branch.
 
+**Bug: retrieval barely retrieved.** (Found and fixed 2026-09-22 during a full read of the codebase.) Three independent faults, all silent:
+
+1. **BM25 tokenized with `content.lower().split()`** — whitespace only. On real prose that makes `WireGuard:` and `master.key` tokens in their own right, which no plain query term can match. Searching `WireGuard` against a store with four documents containing the word returned **zero** hits. Now `\w+`, unicode-aware so accented words survive, applied identically to corpus and query.
+2. **`TemporalRetriever` and `ImportanceRetriever` never look at the query.** They rank the whole store by recency and importance and return the same order for every search. Fused as equals they carried ~31% of the weight in favour of the same few documents regardless of the question — which is why the newest high-importance memory came back top of everything. They are priors, so they now reorder what the query-dependent retrievers found rather than nominating candidates. See `QUERY_DEPENDENT` in [retrieval/hybrid.py](src/memcore_memory/retrieval/hybrid.py).
+3. **The fusion weights could not affect ranking.** It was `rrf * 0.6 + score * 0.4 * w`: the rank term carried no weight, and the score term compares cosine similarity, unbounded BM25 and a recency weight as if they were the same quantity — the exact thing RRF exists to avoid. Now plain weighted RRF, `w / (k + rank)`.
+
+Making the weights real exposed a fourth problem: they were grid-searched with BGE embeddings, but this deployment falls back to a hash embedder whose similarity is noise, and `vector` is the largest weight. `is_semantic()` now detects that and redistributes the vector share to the arms that work.
+
+Measured on the live store, top-3 precision over eight queries whose terms are present: **22/22 after, against roughly 4/24 before.** Re-measure with `memcore memory recall` rather than trusting the numbers here.
+
 **Bug: the blind index never indexed anything — one missing `r` prefix.** (Found and fixed 2026-09-22.)
 
 `BlindIndex._tokenize` matched with `'\b[a-z0-9]{3,}\b'` written as a normal string, so Python turned each `\b` into a **backspace character (0x08)** and the regex went looking for a literal control byte. No real text contains one, so the tokenizer returned an empty set for every input ever passed to it. `compute_index()` returned `[]`, `search_query_hmacs()` returned `[]`, and encrypted search matched nothing — silently, with no error anywhere. `cat` renders 0x08 invisibly, which is why the line reads as correct in a terminal; `grep -P '\x08'` or a hex dump is what shows it.
@@ -103,6 +113,15 @@ Fixed with a raw string, and the `\b` was dropped on purpose: `[a-z0-9]{3,}` alr
 The storage half was missing too: there was no column to put an index in and no way to search one. [storage/encrypted_sqlite.py](src/memcore_memory/storage/encrypted_sqlite.py) now has `blind_index_json` (added by `ALTER TABLE` for existing stores), computes it on `put`, and offers `search_by_blind_index()` ranked by term overlap plus `rebuild_blind_index()` for rows written while the tokenizer was broken — `memcore system reindex-blind` runs it. The index key is derived from the content key via `AES256GCM.derive_subkey`, never reused, per OWASP. Live store reindexed 2026-09-22: 120/120 rows carry a non-empty index and keyword search over ciphertext works.
 
 Note the tradeoff this feature makes: the HMACs live in a plaintext column, so anyone holding the database learns which rows share keywords, though not what they are. Covered by [tests/test_blind_index_and_decay.py](tests/test_blind_index_and_decay.py).
+
+**Also found in the full-codebase read, all fixed 2026-09-22:**
+
+- **The vector store never persisted anything.** `_persist()` ran only `if self.index`, and the index exists only with hnswlib, which is installed nowhere here. So vectors were written to memory and thrown away at every restart; the volume confirms no vector file has ever existed. The lists are now the source of truth, always written to a JSON sidecar. `memcore system reindex-vectors` rebuilds it from the embeddings in SQLite, which were never lost — 120/120 restored on the live store.
+- **HNSW labels were list positions**, while `delete()` removes from the middle and shifts every later position, so a single delete made the index map labels to the wrong memories. The index is rebuilt from the lists now rather than mutated. Mismatched embedding dimensions are refused rather than stored.
+- **Rate limiting had never run** — the middleware was never attached to an app. Its condition also parsed as `"/add" in path or ("/memory" in path and POST)`, because `and` binds tighter than `or`, so a GET to an `/add` path counted as a write and `DELETE /memory/{id}` counted as nothing. Now attached (behind `settings.rate_limit_enabled`), fixed, and returning a real 429 — raising `HTTPException` from middleware never produced one. Note MCP tool calls arrive at `/mcp/call` and are not covered.
+- **`POST /sync/merge` answered `{"status": "merged"}` for any payload and merged nothing.** It returns **501** now. Wiring it up would make it an unauthenticated write endpoint for anything on the LAN, which needs an auth model rather than a quick fix. `MemoryCRDT.merge` also ignored tombstones — every deleted memory came back on the next sync — and had no `from_dict`, so a received payload could not be merged even in principle. Both fixed and tested, so the primitives are ready when the transport is.
+- **`server start` claimed to start an MCP server and a P2P node.** It starts neither; nothing has ever listened on 7742, confirmed against the running container. Message corrected. `docker-compose.yml` still publishes the port.
+- Two library `print()`s still went to **stdout** (`sync/p2p.py`, `sync/gossip.py`), which corrupts the JSON-RPC stream under stdio MCP; a bare `except:` in the WAL swallowed `KeyboardInterrupt` and hid corruption; the PII email pattern had a literal `|` inside a character class.
 
 **Also fixed 2026-09-22, same pass:**
 - `ForgettingCurve` gained `decay_model="power_law"` with `power_d` (Wixted & Ebbesen's fit, which keeps a long tail where the exponential collapses) and `rehearse(feedback=)` to scale how much a recall counts. `feedback=1.0` reproduces the original `S = S*1.6 + 0.5` exactly. **Both new fields are persisted** — `to_dict`/`from_dict` on the curve are now the single serialization point for both the SQLite and Postgres backends, because leaving them out would silently turn a power-law memory exponential on the next read, which is the rehearsal bug all over again.
@@ -212,7 +231,7 @@ Switched to `BM25L` in [retrieval/retrievers/bm25.py](src/memcore_memory/retriev
 .venv/bin/python -m pytest tests/ -q        # pytest + pytest-asyncio installed into .venv 2026-09-22
 ```
 
-Current state: **75 passed, 0 failed, 2 skipped.** The four long-standing `test_excellent.py` failures were fixed on 2026-09-22 rather than left as known-bad; see "Known issues" for the blind-index one, which turned out to be a real and total feature failure rather than a missing method.
+Current state: **94 passed, 0 failed, 2 skipped.** The four long-standing `test_excellent.py` failures were fixed on 2026-09-22 rather than left as known-bad; see "Known issues" for the blind-index one, which turned out to be a real and total feature failure rather than a missing method.
 
 `tests/conftest.py` has an autouse `isolate_data_dir` fixture. It exists because the suite previously ran against the real `~/.memcore` — `test_memory.py` called `create_memory_system()` with no isolation and was writing test memories into the live encrypted store. **Never remove it.**
 
