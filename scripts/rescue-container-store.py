@@ -495,7 +495,7 @@ async def main(argv=None):
 
         from memcore_memory.config import Settings
         from memcore_memory.core.ebbinghaus import ForgettingCurve
-        from memcore_memory.core.tiers import MemoryItem, Tier
+        from memcore_memory.core.tiers import MemoryItem, Tier, _importance_or_none
         from memcore_memory.crypto.aes_gcm import AES256GCM
         from memcore_memory.crypto.key_manager import KeyManager
         from memcore_memory.graph.kg import KnowledgeGraph
@@ -568,6 +568,12 @@ async def main(argv=None):
             check(item.entities == ents, f"{row['id']}: entities mismatch")
             if row["forgetting_json"]:
                 for field, value in json.loads(row["forgetting_json"]).items():
+                    if field == "importance":
+                        # Loading syncs the curve's copy to metadata['importance']
+                        # (the one users set; memory_update used to change only it),
+                        # so where metadata holds a valid one, that is what's expected.
+                        synced = _importance_or_none(d.get("metadata", {}).get("importance"))
+                        value = value if synced is None else synced
                     check(getattr(item.forgetting, field) == value, f"{row['id']}: {field}")
 
         kg_db = settings.db_path.with_suffix(".kg.db")
