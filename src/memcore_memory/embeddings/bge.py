@@ -1,4 +1,5 @@
 
+import sys
 from typing import List
 from .base import BaseEmbedder
 
@@ -25,23 +26,40 @@ class BGEEmbedder(BaseEmbedder):
         try:
             from sentence_transformers import SentenceTransformer
             import torch
+        except ImportError:
+            print(f"[embeddings] sentence-transformers not installed, fallback to hash. pip install sentence-transformers torch", file=sys.stderr)
+            self._use_hash_fallback()
+            return
+        try:
             device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
-            self._model = SentenceTransformer(self.model_name, device=device)
-            if not self.dim:
-                self.dim = self._model.get_sentence_embedding_dimension()
-            print(f"[embeddings] Loaded {self.model_name} dim={self.dim} on {device}")
-        except ImportError as e:
-            print(f"[embeddings] sentence-transformers not installed, fallback to hash. pip install sentence-transformers torch")
-            from .local import LocalHashEmbedder
-            fallback = LocalHashEmbedder(dim=self.dim or 768)
-            self.embed = fallback.embed
-            self.dim = fallback.dim
+            model = SentenceTransformer(self.model_name, device=device)
+            native = model.get_sentence_embedding_dimension()
+            if not native:
+                native = len(model.encode(["dimension probe"], show_progress_bar=False)[0])
         except Exception as e:
-            print(f"[embeddings] Failed to load {self.model_name}: {e}, using hash fallback")
-            from .local import LocalHashEmbedder
-            fallback = LocalHashEmbedder(dim=self.dim or 768)
-            self.embed = fallback.embed
-            self.dim = fallback.dim
+            print(f"[embeddings] Failed to load {self.model_name}: {e}, using hash fallback", file=sys.stderr)
+            self._use_hash_fallback()
+            return
+        # Outside the fallback's except on purpose. A requested dim used to win
+        # over the model's own, so bge-base kept dim=384 while emitting 768-wide
+        # vectors, and every add() failed only after its row was written. A
+        # mismatch is a configuration error; degrading it to the hash embedder
+        # would quietly swap a working model for noise.
+        if self.dim and self.dim != native:
+            raise ValueError(
+                f"{self.model_name} produces {native}-dim embeddings but {self.dim} were "
+                f"requested (MNEM_EMBEDDING_DIM={self.dim}); set MNEM_EMBEDDING_DIM={native}. "
+                f"Vectors already stored at {self.dim} dims must be re-embedded.")
+        self._model = model
+        self.dim = native
+        print(f"[embeddings] Loaded {self.model_name} dim={self.dim} on {device}", file=sys.stderr)
+
+    def _use_hash_fallback(self):
+        # Keeps the requested dim: the live store's 384-dim hash vectors depend on it.
+        from .local import LocalHashEmbedder
+        fallback = LocalHashEmbedder(dim=self.dim or 768)
+        self.embed = fallback.embed
+        self.dim = fallback.dim
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         if not self._model:

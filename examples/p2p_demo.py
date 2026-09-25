@@ -1,18 +1,24 @@
+# P2P sync is NOT implemented: there is no transport, and P2PNode.start() raises
+# NotImplementedError. What does exist are the CRDT primitives a transport would
+# carry, so this demo merges two in-memory replicas directly. It opens no socket
+# and touches no store.
+from memcore_memory.sync.crdt import MemoryCRDT
 
-import asyncio
-from mnemosyne.sync.p2p import P2PNode
 
-async def main():
-    node1 = P2PNode(port=7742, peers=[])
-    node2 = P2PNode(port=7743, peers=["ws://localhost:7742"])
-    
-    await node1.start()
-    await node2.start()
-    
-    await node1.broadcast_memory("mem-123", {"content": "Federated memory"})
-    
-    await asyncio.sleep(2)
-    await node1.stop()
-    await node2.stop()
+def main():
+    a = MemoryCRDT("node-a")
+    b = MemoryCRDT("node-b")
 
-asyncio.run(main())
+    a.update("mem-1", {"content": "written on A"})
+    b.update("mem-2", {"content": "written on B"})
+    b.update("mem-1", {"content": "written on A"})
+    b.delete("mem-1")
+
+    # What a receiving peer would do with a payload: rebuild it, then merge.
+    received = MemoryCRDT.from_dict(b.to_dict())
+    merged = a.merge(received)
+    print("live after merge:", sorted(merged.live_ids()))  # mem-1's tombstone wins
+
+
+if __name__ == "__main__":
+    main()

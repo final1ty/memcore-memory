@@ -16,8 +16,13 @@ async def test_add_recall():
 async def test_ebbinghaus():
     mem = await create_memory_system()
     item = await mem.add("Ebbinghaus test", tier="episodic")
-    r1 = item.forgetting.retention()
+    # Comparing retention just after creation with retention just after touch() was
+    # 1.0 >= 1.0 whether or not rehearsal did anything; strength is what it changes.
+    s0 = item.forgetting.strength
     item.touch()
-    r2 = item.forgetting.retention()
-    assert r2 >= r1
     assert item.forgetting.rehearsals == 1
+    assert item.forgetting.strength == pytest.approx(s0 * 1.6 + 0.5)
+    later = item.forgetting.last_access + 30 * 86400
+    fresh = type(item.forgetting)(strength=s0, last_access=item.forgetting.last_access,
+                                  importance=item.forgetting.importance)
+    assert item.forgetting.retention(later) > fresh.retention(later)

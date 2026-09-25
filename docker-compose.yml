@@ -1,36 +1,32 @@
+# Pinned rather than derived from the checkout's directory name: the live volume is
+# memcore-memory-100_mnem_data, and compose names volumes <project>_<volume>. A clone
+# under any other directory would otherwise start against a fresh, empty volume.
+name: memcore-memory-100
 
-version: "3.9"
 services:
   mnemosyne:
     build: .
     image: mnemosyne-memory:1.0.0
     container_name: mnemosyne
     ports:
-      - "8000:8000"   # REST API
-      - "7742:7742"   # P2P sync
+      - "8000:8000"
+      # 7742 was published for P2P gossip. Nothing has ever listened on it - P2P is
+      # not implemented - so it is no longer published.
     volumes:
       - mnem_data:/data
     environment:
       - MNEM_DATA_DIR=/data
       - MNEM_LOG_LEVEL=INFO
-      - MNEM_P2P_PORT=7742
-      - MNEM_EMBEDDING_DIM=768
+      # Was 768. Harmless while MNEM_* was being ignored, but the prefix fix makes
+      # every var here take effect at once - and 768 would re-dimension the embedder
+      # away from the 384-dim vectors already in the store. Keep it matching
+      # config.py's embedding_dim default.
+      - MNEM_EMBEDDING_DIM=384
       - MNEM_ENCRYPTION_ENABLED=true
+      # Setting MNEM_API_KEY makes every REST route except /health and /livez require
+      # "Authorization: Bearer <key>". Left unset here because the Windows bridge and
+      # the local `server mcp --remote` bridge would both need the key first.
     restart: unless-stopped
-
-  mnemosyne-peer2:
-    build: .
-    ports:
-      - "8001:8000"
-      - "7743:7742"
-    volumes:
-      - mnem_data_peer2:/data
-    environment:
-      - MNEM_DATA_DIR=/data
-      - MNEM_P2P_PEERS=["ws://mnemosyne:7742"]
-    depends_on:
-      - mnemosyne
 
 volumes:
   mnem_data:
-  mnem_data_peer2:

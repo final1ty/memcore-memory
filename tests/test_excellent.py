@@ -37,22 +37,44 @@ def test_pii_filter():
     findings = pf.scan("Contact me at adam@example.com or 123-45-6789")
     assert "email" in findings
     assert "ssn" in findings
-    allowed, redacted, _ = pf.check_and_act("My email is adam@example.com")
-    assert allowed == True
-    assert "REDACTED" in redacted or pf.action == "warn"
+    text = "My email is adam@example.com"
+    # warn passes the text through untouched but still reports what it saw.
+    allowed, out, found = pf.check_and_act(text)
+    assert allowed is True
+    assert out == text
+    assert "email" in found
+    # The old assertion ended in `or pf.action == "warn"`, so redaction was never checked.
+    allowed, redacted, _ = PIIFilter(enabled=True, action="redact").check_and_act(text)
+    assert allowed is True
+    assert "adam@example.com" not in redacted
+    assert "REDACTED" in redacted
+    allowed, _, _ = PIIFilter(enabled=True, action="block").check_and_act("ssn 123-45-6789")
+    assert allowed is False
 
 def test_bm25_cache():
     from memcore_memory.retrieval.retrievers.bm25 import BM25Retriever
-    # Mock store
+    from memcore_memory.core.tiers import MemoryItem, Tier
+    import asyncio
+    # One fixed list: building fresh MemoryItems per call gave them fresh ids, so the
+    # cache key changed every time and caching could not be observed at all.
+    items = [MemoryItem(content="User likes python", tier=Tier.EPISODIC),
+             MemoryItem(content="User prefers dark mode", tier=Tier.SEMANTIC)]
+
     class MockStore:
         async def list_all(self):
-            from memcore_memory.core.tiers import MemoryItem, Tier
-            return [MemoryItem(content="User likes python", tier=Tier.EPISODIC), MemoryItem(content="User prefers dark mode", tier=Tier.SEMANTIC)]
-    
+            return list(items)
+
     retr = BM25Retriever(MockStore())
-    import asyncio
     results = asyncio.run(retr.retrieve("python", k=2))
-    assert isinstance(results, list)
+    assert results and results[0]["id"] == items[0].id and results[0]["score"] > 0
+    assert items[1].id not in [r["id"] for r in results]
+    built = retr._bm25
+    asyncio.run(retr.retrieve("python", k=2))
+    assert retr._bm25 is built, "unchanged corpus must reuse the index"
+    items.append(MemoryItem(content="python again", tier=Tier.EPISODIC))
+    results = asyncio.run(retr.retrieve("python", k=5))
+    assert retr._bm25 is not built, "a changed corpus must rebuild the index"
+    assert items[2].id in [r["id"] for r in results]
 
 def test_working_buffer_persistence():
     from memcore_memory.core.working_buffer import PersistentWorkingBuffer
@@ -80,10 +102,17 @@ def test_ebbinghaus_power_law():
 
 def test_reranker_fallback():
     from memcore_memory.retrieval.reranker import CrossEncoderReranker
-    rr = CrossEncoderReranker()
-    docs = [{"id": "1", "content": "python is great", "score": 0.8}, {"id": "2", "content": "dark mode", "score": 0.6}]
+    # A name no hub can serve: the default would pull ~1.3GB of bge-reranker-large
+    # on any machine that has sentence-transformers.
+    rr = CrossEncoderReranker(model_name="nonexistent/model-for-test")
+    if rr._model is not None:
+        pytest.skip("a cross-encoder loaded; this pins down the no-model fallback")
+    # Given in the wrong order on purpose: returning the input unchanged used to pass.
+    docs = [{"id": "2", "content": "dark mode", "score": 0.6}, {"id": "1", "content": "python is great", "score": 0.8}]
     reranked = rr.rerank("python", docs, top_k=2)
-    assert len(reranked) == 2
+    assert [d["id"] for d in reranked] == ["1", "2"]
+    assert [d["score"] for d in reranked] == [0.8, 0.6]
+    assert [d["id"] for d in rr.rerank("python", docs, top_k=1)] == ["1"]
 
 @pytest.mark.asyncio
 async def test_encrypted_store_blind_index():
@@ -104,16 +133,11 @@ async def test_encrypted_store_blind_index():
         items = await store.search_by_content("dark mode", limit=5)
         assert len(items) >= 1
 
-def test_key_manager_enforce_password():
+def test_key_manager_enforce_password(tmp_path, monkeypatch):
+    # monkeypatch, not os.environ: the old version set MEMCORE_ENV and then popped it
+    # in `finally`, which deleted the variable for every test collected after this one.
     from memcore_memory.crypto.key_manager import KeyManager
-    import tempfile, os
-    with tempfile.TemporaryDirectory() as tmp:
-        os.environ["MEMCORE_ENV"] = "prod"
-        km = KeyManager(Path(tmp)/"master.key")
-        try:
-            km.load_or_create(password=None)
-            assert False, "Should have raised in prod without password"
-        except ValueError as e:
-            assert "master password required" in str(e).lower()
-        finally:
-            os.environ.pop("MEMCORE_ENV", None)
+    monkeypatch.setenv("MEMCORE_ENV", "prod")
+    with pytest.raises(ValueError, match="(?i)master password required"):
+        KeyManager(tmp_path / "master.key").load_or_create(password=None)
+    assert not (tmp_path / "master.key").exists()

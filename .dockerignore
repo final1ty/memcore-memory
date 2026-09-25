@@ -1,0 +1,34 @@
+# Without this the build context is ~250MB of .venv and .git that the image never
+# uses - the Dockerfile only COPYs pyproject.toml, README.md and src/.
+.venv/
+.git/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.egg-info/
+**/backups/
+.mcp.json
+k8s/
+examples/
+tests/
+# Never ship store files, key material or plaintext dumps in the build context, even
+# though no COPY picks them up: the whole context is sent to the daemon.
+# Unlike .gitignore, a bare pattern here only matches at the root, hence **/.
+memcore-full-audit-*/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.db-journal
+**/*.key
+**/.master-password
+**/*.vectors.json
+**/*.hnsw
+**/working_buffer.jsonl
+**/*.tar.gz
+**/*.tgz
+**/audit.log
+**/container-rescue-*.json
+**/.memcore/

@@ -1,23 +1,24 @@
 
 from typing import List, Dict
 
+
 class GraphRetriever:
+    """Memories whose linked knowledge-graph entities are named in the query.
+
+    This used to call ``kg.get_related_memories`` behind a ``hasattr`` guard on a
+    method that did not exist, so the arm returned [] for every query while
+    carrying the second-largest fusion weight. No guard now: a graph without the
+    method is a bug that should surface (HybridRetriever logs a failing arm).
+    """
+
     def __init__(self, kg):
         self.kg = kg
 
     async def retrieve(self, query: str, k: int = 20) -> List[Dict]:
-        # naive: extract entity-like tokens
-        tokens = [t for t in query.split() if len(t) > 3]
-        all_hits = []
-        for tok in tokens[:3]:
-            hits = await self.kg.traverse(tok, depth=1, limit=k)
-            for h in hits:
-                # need to find memory ids linked to this edge
-                all_hits.append(h)
-        # Convert graph hits to memory ids via related memories
-        mem_ids = []
-        for tok in tokens[:3]:
-            mids = await self.kg.get_related_memories(tok) if hasattr(self.kg, 'get_related_memories') else []
-            for mid in mids:
-                mem_ids.append({'id': mid, 'score': 0.7, 'source': 'graph'})
-        return mem_ids[:k]
+        # Entity matching belongs to the graph, which knows its entity names -
+        # including multi-word ones that splitting the query into tokens would miss.
+        mem_ids = await self.kg.get_related_memories(query, limit=k)
+        n = len(mem_ids)
+        # Only the order matters to RRF; the score just keeps it visible to callers.
+        return [{'id': mid, 'score': (n - i) / n, 'source': 'graph'}
+                for i, mid in enumerate(mem_ids[:k])]

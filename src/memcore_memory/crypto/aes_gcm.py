@@ -1,12 +1,22 @@
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
-import os, base64
+import os, base64, hmac, hashlib
 
 class AES256GCM:
     def __init__(self, key: bytes):
         assert len(key) == 32
+        self._key = key
         self.aesgcm = AESGCM(key)
+
+    def derive_subkey(self, info: bytes) -> bytes:
+        """Domain-separated subkey for a purpose other than encryption.
+
+        The blind index needs its own key: reusing the encryption key for the
+        search HMACs would mean one compromise breaks both (OWASP). `info` is the
+        domain label, so different purposes can never collide.
+        """
+        return hmac.new(self._key, info, hashlib.sha256).digest()
 
     @staticmethod
     def derive_key(password: str, salt: bytes) -> bytes:
