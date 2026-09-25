@@ -42,12 +42,12 @@ SkyNAS — HP EliteDesk 840G5, Ubuntu, 192.168.1.183, Docker enabled
                                 context only, not part of memcore-memory
 ```
 
-Claude Code sessions on the SkyNAS host use [.mcp.json](.mcp.json), which selects **local mode** (plain `server mcp`, opening `/home/skynas/.memcore` with `$MNEM_MASTER_PASSWORD`) since commit `32906cd` — **not** the container. Bridge mode (`server mcp --remote http://192.168.1.183:8000`, forwarding to `POST /mcp/call`) reaches the container's store instead; see [MCP access](#mcp-access-for-this-project). `server mcp` prints which one it is serving to stderr at startup. Plain `curl` to `:8000` still works for scripts (examples below).
+Claude Code sessions on the SkyNAS host use [.mcp.json](.mcp.json), which selects **bridge mode** (`server mcp --remote http://192.168.1.183:8000`, forwarding to `POST /mcp/call`) since 2026-09-25: the container's store is the authoritative one, and no password is needed. Local mode (from commit `32906cd` until then) never connected from the desktop app, because `$MNEM_MASTER_PASSWORD` is exported only by `~/.profile`/`~/.bashrc`, which the app does not source; see [MCP access](#mcp-access-for-this-project). `server mcp` prints which one it is serving to stderr at startup. Plain `curl` to `:8000` still works for scripts (examples below).
 
 ```
 SkyNAS host
-  Claude Code ──stdio──▶ server mcp (local)    ──▶ /home/skynas/.memcore   (.mcp.json today)
-  Claude Code ──stdio──▶ server mcp --remote ──HTTP──▶ container :8000 ──▶ /data
+  Claude Code ──stdio──▶ server mcp (local)    ──▶ /home/skynas/.memcore   (retired 2026-09-25)
+  Claude Code ──stdio──▶ server mcp --remote ──HTTP──▶ container :8000 ──▶ /data   (.mcp.json today)
 ```
 
 ## SkyNAS deployment (verified live 2026-09-25 after deploying the 2026-09-24/25 changes)
@@ -62,7 +62,7 @@ SkyNAS host
 - `GET http://192.168.1.183:8000/health` → `{"status":"ok","version":"1.0.0","tier_counts":{"working":7,"episodic":100,"semantic":13}}` — 120 memories as of 2026-09-22 16:40. **[2026-09-24/25]** After the redeploy the response gains `reasons`, `unreadable_count` and `unreadable`, and `status` can be `degraded` (HTTP 200) or `unhealthy` (HTTP 503). `GET /memories` defaults to `limit=50` and cuts content at 500 characters; use `GET /memory/{id}` whenever full content matters.
 - **There are two separate, non-synced SQLite stores on this host.** Don't assume they hold the same data — as of 2026-09-22 16:40 they do not:
   1. **The volume** `memcore-memory-100_mnem_data`, mounted at `/data` — what the REST API on :8000 serves, 120 memories, `master.key` 32 bytes (unprotected, no password). Since the 2026-09-22 deploy this is the real store: the container no longer has a `/root/.memcore` at all, so recreation and `tar`-based backups cover the data. The host directory is root-owned, so a host process still can't open it directly — that's why MCP has a REST bridge.
-  2. `/home/skynas/.memcore/` — a separate store used when the CLI (`.venv/bin/memcore ...`) runs directly on the host. 124 memories, `master.key` 187 bytes (password-protected, Argon2id-wrapped). [scripts/sync-rest-to-local.py](scripts/sync-rest-to-local.py) copies REST records into it, matching on exact full content, but the counts still differ and neither is a superset. `.mcp.json` currently points MCP clients here.
+  2. `/home/skynas/.memcore/` — a separate store used when the CLI (`.venv/bin/memcore ...`) runs directly on the host. 124 memories, `master.key` 187 bytes (password-protected, Argon2id-wrapped). [scripts/sync-rest-to-local.py](scripts/sync-rest-to-local.py) copies REST records into it, matching on exact full content, but the counts still differed. **Reconciled 2026-09-25**: of 125 host memories 117 matched the container by content; the 5 real host-only ones (Nostro lead automation, Nexi templates, PDF AcroForm pitfalls, commit convention) were added to the container with `metadata.origin_id`, and 3 smoke-test lines ("SkyNas first memory", "SkyNas production memory with BGE embeddings", "B terv REST szerver megy SkyNas-on") were not carried over. The container is authoritative since; this store is retired and no longer used by `.mcp.json`.
 
   A third store used to exist — `/root/.memcore` in the container's writable layer — and was where everything actually lived while `MNEM_DATA_DIR` was being ignored. The deploy moved its contents into the volume and it is gone.
 - Windows bridge (`C:\Users\A\memcore_remote_mcp.py` → Claude Desktop MCP entry `memcore-skynas`, 4 tools) is **not verifiable from this host** — this session has no access to the Windows filesystem. Take its config on faith until confirmed from the Windows side. If it checks `/health`, it must not treat a non-`ok` status as "down" after the redeploy: `degraded` is HTTP 200 and still serves.
@@ -293,7 +293,7 @@ Items not already folded into the sections above.
 
   **Bridge mode** — `server mcp --remote http://192.168.1.183:8000` (or an exported `MNEM_REMOTE_URL`) — proxies to the container, so MCP sees exactly what the REST API serves (120 memories) and needs no master password, since the container unlocked its key at startup. Verified end-to-end: 29 tools, `data_dir=/data`. If the container ever sets `MNEM_API_KEY`, pass it with `--api-key` / `MNEM_API_KEY`.
 
-  **Local mode** — plain `server mcp` with `$MNEM_MASTER_PASSWORD` — opens `/home/skynas/.memcore` (124 memories) and is what [.mcp.json](.mcp.json) currently selects, as of commit `32906cd`, paired with `scripts/sync-rest-to-local.py` to pull container records down.
+  **Local mode** — plain `server mcp` with `$MNEM_MASTER_PASSWORD` — opens `/home/skynas/.memcore` (retired, see the store list). [.mcp.json](.mcp.json) selected it from commit `32906cd` until 2026-09-25 and now selects bridge mode. Opening that store with current code migrates it one-way; inspect a copy (`MNEM_DATA_DIR=<copy>`).
 
   Whichever is configured, **know which store you are talking to**. Both open cleanly, both answer every query, and they disagree — so a client pointed at the wrong one looks perfectly healthy while serving memories nobody wrote. That is what made the first version of `.mcp.json` wrong: it silently switched stores without saying so. **[2026-09-24/25]** `server mcp` now prints `[memcore] bridge mode -> <url> (from MNEM_REMOTE_URL|--remote)` or `[memcore] local store (<backend>): <data_dir>` to stderr at startup — check that line. Bridge mode is covered by [tests/test_mcp_remote.py](tests/test_mcp_remote.py), and `tests/test_audit_J_round2.py` runs the same call sequence through local and bridge mode against a real uvicorn server and requires identical results.
 
