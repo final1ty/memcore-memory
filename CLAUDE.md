@@ -2,7 +2,7 @@
 
 Production-grade local-first memory system for AI agents. PyPI: `memcore-memory` (imports as `memcore_memory`, legacy shim package `mnemosyne`, including `python -m mnemosyne.cli.main`). Docker Hub: `memcorehq`. Author: Kovács-Dobos Ádám <kovacsdobosadam@gmail.com>. GitHub: https://github.com/final1ty/memcore-memory (Apache-2.0).
 
-> **2026-09-24/25 audit-fix pass.** A full audit (133 confirmed findings, two fix rounds) changed a lot of behaviour described below. Statements that changed are marked **[2026-09-24/25]**. The finding records (ids `F*`/`R*`) are in `memcore-full-audit-2026-09-24_wf_951355b1-d57/workflow-teljes-eredmeny.json` (gitignored). **The live SkyNAS container has not been redeployed with these changes yet — deploy state: pending redeploy.** See [Deploying the 2026-09-24/25 changes](#deploying-the-2026-0924-25-changes) before you deploy.
+> **2026-09-24/25 audit-fix pass.** A full audit (133 confirmed findings, two fix rounds) changed a lot of behaviour described below. Statements that changed are marked **[2026-09-24/25]**. The finding records (ids `F*`/`R*`) are in `memcore-full-audit-2026-09-24_wf_951355b1-d57/workflow-teljes-eredmeny.json` (gitignored). **Deployed to the live SkyNAS container on 2026-09-25 04:56 (+0200)** — see the verification under "SkyNAS deployment". See [Deploying the 2026-09-24/25 changes](#deploying-the-2026-0924-25-changes) before you deploy.
 
 ## Architecture (verified against `src/memcore_memory/`)
 
@@ -50,7 +50,11 @@ SkyNAS host
   Claude Code ──stdio──▶ server mcp --remote ──HTTP──▶ container :8000 ──▶ /data
 ```
 
-## SkyNAS deployment (verified live 2026-09-22; pending redeploy of the 2026-09-24/25 changes)
+## SkyNAS deployment (verified live 2026-09-25 after deploying the 2026-09-24/25 changes)
+
+- **Deployed 2026-09-25 04:56 (+0200)** with `scripts/deploy-skynas.sh` (commit `18c22fb`). Verified right after: 120/120 memories, `master.key` unchanged across startup, `/livez` ok, `/health` `unreadable_count: 0`, only port 8000 published (7742 gone), `/data/vectors.vectors.json` 0600 with meta keys `{'tier'}` only (the plaintext excerpts are gone from the volume), 120/120 rows with encrypted entities and none in `entities_json`, `POST /recall "WireGuard"` finds the WireGuard memory. Rollback point: `backups/20260925-045648-volume-before-deploy.tgz` (the pre-deploy volume - it still contains the old plaintext sidecar, so treat it as sensitive) and `backups/20260925-045648-recovered-store`. The first deploy attempt that morning aborted safely in the rescue verifier (forgetting-curve importance is now synced from metadata on load); fixed in `18c22fb`.
+- The rescue rebuilds the sidecar with current code, so the `reindex-vectors` step below was not needed for this deploy; it still is when deploying a `SOURCE` that carries an old-format sidecar.
+- Everything below this point up to the store list is the 2026-09-22 state, kept for history.
 
 - Host: SkyNAS, HP EliteDesk 840 G5, Ubuntu, LAN IP `192.168.1.183` (confirmed via `ip addr` on host).
 - Container `mnemosyne` (image `mnemosyne-memory:1.0.0`) — **running**, ports `8000` (REST) and `7742` bound as of 2026-09-22, `restart: unless-stopped`. Confirmed via `docker ps` then. It runs the code of the 2026-09-22 deploy (first deploy 16:39 +0200; `backups/` shows further rescue/deploy runs up to 17:24 that day, and which one was the last successful redeploy was not re-verified). **None of the 2026-09-24/25 fixes are live in it.**

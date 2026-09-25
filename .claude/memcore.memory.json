@@ -1,7 +1,7 @@
 {
   "project": "memcore-memory",
   "endpoint": "http://192.168.1.183:8000",
-  "p2p_port_note": "7742 is NOT published by docker-compose.yml any more (2026-09-24 change; the running container still publishes it until the pending redeploy). Nothing has ever listened on it: P2P sync is not implemented and every P2P/gossip entry point raises NotImplementedError.",
+  "p2p_port_note": "7742 is no longer published (verified with docker port after the 2026-09-25 deploy). Nothing has ever listened on it; P2P sync is not implemented.",
   "skymcp": "http://192.168.1.183:8765",
   "skymcp_note": "separate, unrelated MCP gateway container (/opt/skymcp) - listed for reference only, not part of memcore-memory",
   "db_live": "/data/memory.db inside the mnemosyne container == the memcore-memory-100_mnem_data volume (since the 2026-09-22 deploy; first deployed 2026-09-22 16:39 (+0200); backups/ holds further rescue/deploy runs that day up to 17:24, and which of them was the last successful redeploy was not re-verified)",
@@ -105,9 +105,9 @@
     "docker-compose no longer publishes 7742; HEALTHCHECK and k8s probes use /livez; k8s via kustomize, single replica, master key from Secret",
     "deploy-skynas.sh: build first, rescue every run, id-level check, volume tarball, row-level fingerprint compare, stage only store files, --force-recreate"
   ],
-  "verified_at": "2026-09-25 (docs pass against the uncommitted 2026-09-24/25 working tree; live deployment not re-inspected)",
+  "verified_at": "2026-09-25 (live container inspected after deploy)",
   "tests": "611 passed, 0 failed, 2 skipped (2026-09-25, `.venv/bin/python -m pytest tests/ -q -p no:cacheprovider`, 210 s)",
-  "deployed": "2026-09-22 - container rebuilt from the then-fixed tree, data in the volume, 120 memories, blind index rebuilt 120/120, survives restart (first deployed 2026-09-22 16:39 (+0200); backups/ holds further rescue/deploy runs that day up to 17:24, and which of them was the last successful redeploy was not re-verified). PENDING REDEPLOY: the 2026-09-24/25 audit fixes are NOT yet live in the container.",
+  "deployed": "2026-09-25 04:56 (+0200) - audit fixes (commits d3d0bed, 18c22fb) live: 120/120 memories, master.key unchanged, /livez ok, unreadable_count 0, only 8000 published, sidecar 0600 with tier-only meta, entities encrypted 120/120. Rollback: restore backups/20260925-045648-volume-before-deploy.tgz (never start the old image on the migrated store).",
   "deploy_procedure": "bash scripts/deploy-skynas.sh [--keep-plaintext] [--drop-kg-hand-added] [SOURCE] - builds first, rescues through the API on every run, requires every live id in the store to stage, stops the container, tars the volume to BACKUP_ROOT/<stamp>-volume-before-deploy.tgz, compares the stopped volume with the rescue snapshot row by row (aborts and restarts the old container on any difference), stages only master.key/memory.db/memory.kg.db/vectors.vectors.json, recreates with --force-recreate. AFTER deploying this version: run `docker exec mnemosyne python -m memcore_memory.cli.main system reindex-vectors` to rewrite the sidecar; first open migrates entities and upgrades memory.kg.db one-way, so ROLLBACK = restore the pre-deploy volume tarball, never start the old image on the migrated volume.",
   "blind_index_note": "Worked for the first time on 2026-09-22. The tokenizer regex was written as '\\b[a-z0-9]{3,}\\b' in a non-raw string, so \\b became a backspace (0x08) and nothing ever matched - every index written was empty. Live store reindexed: 120/120 rows carry a non-empty index. Reachable from the SDK and CLI (store.search_by_blind_index, `memcore memory search-blind QUERY [--k N]`, `memcore system reindex-blind`), NOT over REST or MCP.",
   "store_divergence": "container 120 vs host 124 records as of 2026-09-22 17:15; neither is a superset. Unresolved - needs a decision on which is authoritative."
