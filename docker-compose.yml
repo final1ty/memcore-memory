@@ -23,9 +23,12 @@ services:
       # config.py's embedding_dim default.
       - MNEM_EMBEDDING_DIM=384
       - MNEM_ENCRYPTION_ENABLED=true
-      # Setting MNEM_API_KEY makes every REST route except /health and /livez require
-      # "Authorization: Bearer <key>". Left unset here because the Windows bridge and
-      # the local `server mcp --remote` bridge would both need the key first.
+    # MNEM_API_KEY makes every REST route except /health and /livez require
+    # "Authorization: Bearer <key>" or "X-API-Key: <key>". It comes from a file outside
+    # the repo (0600, not on the share); without that file the API stays open.
+    env_file:
+      - path: /home/skynas/.config/memcore/container.env
+        required: false
     restart: unless-stopped
 
 volumes:

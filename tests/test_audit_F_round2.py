@@ -312,6 +312,31 @@ def test_mcp_bridge_names_its_mode_and_passes_the_key(monkeypatch):
     assert seen == {"url": "http://bridge:1", "api_key": "sekrit"}
 
 
+
+def test_mcp_bridge_reads_the_key_from_a_file(monkeypatch, tmp_path):
+    import memcore_memory.mcp.remote as remote
+    seen = {}
+
+    class Fake(_Server):
+        def __init__(self, url, timeout=30.0, api_key=None):
+            seen.update(api_key=api_key)
+
+        async def connect(self):
+            return self
+
+    monkeypatch.setattr(remote, "RemoteMCPServer", Fake)
+    monkeypatch.delenv("MNEM_API_KEY", raising=False)
+    key = tmp_path / "api-key"
+    key.write_text("from-file\n")
+    res = invoke("server", "mcp", "--remote", "http://bridge:1", "--api-key-file", str(key))
+    assert res.exit_code == 0, res.output
+    assert seen == {"api_key": "from-file"}
+
+    res = invoke("server", "mcp", "--remote", "http://bridge:1", "--api-key-file", str(tmp_path / "nope"))
+    assert res.exit_code == 1
+    assert "cannot read --api-key-file" in res.stderr
+
+
 def test_mcp_local_mode_names_the_data_dir(monkeypatch):
     import memcore_memory.mcp.server as server
 

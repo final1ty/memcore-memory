@@ -600,10 +600,26 @@ def server_mcp(
         None, "--api-key", envvar="MNEM_API_KEY",
         help="Bearer key for a --remote instance that sets MNEM_API_KEY.",
     ),
+    api_key_file: Path = typer.Option(
+        None, "--api-key-file",
+        help="Read the --api-key from this file (first line). For clients such as the "
+             "desktop app that don't source the shell profile, so the key stays out of "
+             "a committed config.",
+    ),
 ):
     """Serve the MCP protocol over stdio (for Claude Desktop, Claude Code, any MCP client)."""
     import contextlib
     from ..mcp.remote import RemoteUnavailable
+
+    if api_key_file and not api_key:
+        try:
+            api_key = api_key_file.read_text().strip() or None
+        except OSError as e:
+            sys.stderr.write(f"[memcore] cannot read --api-key-file {api_key_file}: {e}\n")
+            raise typer.Exit(1)
+        if not api_key:
+            sys.stderr.write(f"[memcore] --api-key-file {api_key_file} is empty\n")
+            raise typer.Exit(1)
 
     async def _run():
         # stdout is the JSON-RPC stream from here on; keep startup chatter off it.
