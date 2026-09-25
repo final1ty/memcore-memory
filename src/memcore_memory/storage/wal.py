@@ -1,5 +1,10 @@
+"""An application-level append log. Not used by the store.
 
-import json, sys, time
+Durability comes from SQLite itself: EncryptedStore runs memory.db in WAL journal
+mode (see EncryptedStore.init). Nothing in this package imports this class; it
+is kept only for outside callers and is a candidate for deletion.
+"""
+import json, os, sys, time
 from pathlib import Path
 
 class WAL:
@@ -11,6 +16,9 @@ class WAL:
         entry = {'ts': time.time(), 'op': op, 'data': data}
         with open(self.path, 'a') as f:
             f.write(json.dumps(entry) + '\n')
+            # A log that isn't flushed to disk before returning protects nothing.
+            f.flush()
+            os.fsync(f.fileno())
 
     def replay(self):
         if not self.path.exists():

@@ -1,4 +1,8 @@
-
+# Single replica on purpose. With MNEM_BACKEND=postgres the memories live in the
+# shared database, but the knowledge graph is still SQLite at /data/memory.kg.db, so
+# two pods would mean two writers on one SQLite file (or, on a ReadWriteOnce claim,
+# a second pod stuck Pending). Raise the replica count, and add an autoscaler, only
+# once the KG lives in Postgres too.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,12 +11,11 @@ metadata:
   labels:
     app: mnemosyne
 spec:
-  replicas: 3
+  replicas: 1
+  # Recreate, not RollingUpdate: a surge pod would open the same SQLite KG while the
+  # old one is still writing to it.
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   selector:
     matchLabels:
       app: mnemosyne
@@ -20,29 +23,63 @@ spec:
     metadata:
       labels:
         app: mnemosyne
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
     spec:
       containers:
       - name: api
-        image: mnemosyne-memory:1.0.0
-        imagePullPolicy: Always
+        # Built with the postgres extras, which the default image does not have:
+        #   docker build --build-arg BACKEND=postgres -t mnemosyne-memory:1.0.0-pg .
+        # then push it to your registry (and use that path here) or load it onto the
+        # nodes (kind load / ctr import). IfNotPresent, because an unqualified local
+        # tag resolves to docker.io/library/... and cannot be pulled.
+        image: mnemosyne-memory:1.0.0-pg
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
           name: http
-        - containerPort: 7742
-          name: p2p
         env:
         - name: MNEM_BACKEND
           value: postgres
-        - name: DATABASE_URL
+        # Referenced by MNEM_DATABASE_URL below; $(VAR) only sees variables defined
+        # earlier in this list, so it has to come first. The DSN is built here rather
+        # than stored in the Secret so the password exists in exactly one place.
+        # It used to be DATABASE_URL, which config.py (prefix MNEM_) never reads.
+        - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: mnemosyne-secrets
-              key: database-url
-        - name: MNEM_EMBEDDING_PROVIDER
-          value: bge-small
+              key: postgres-password
+        - name: MNEM_DATABASE_URL
+          value: "postgresql+asyncpg://mnemosyne:$(POSTGRES_PASSWORD)@postgres:5432/mnemosyne"
+        # The one key every restart must find again. It comes from the Secret on a
+        # read-only mount, so a missing key fails loudly instead of the pod minting
+        # its own and encrypting rows nobody else can read.
+        - name: MNEM_KEY_PATH
+          value: /keys/master.key
+        # Refuses to create an unprotected key; loading an existing one is unaffected.
+        - name: MNEM_ENV
+          value: prod
+        # Only needed when master.key is a password-wrapped (JSON) key; without it such
+        # a key fails with MasterPasswordRequired and the pod crash-loops. A raw key
+        # ignores it, with a warning on stderr.
+        - name: MNEM_MASTER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mnemosyne-secrets
+              key: master-password
+              optional: true
+        - name: MNEM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mnemosyne-secrets
+              key: api-key
+              optional: true
+        # MNEM_EMBEDDING_PROVIDER is baked into the image by the Dockerfile's
+        # EMBEDDING_PROVIDER build arg (default: local). Do not override it here: to
+        # get real BGE vectors, build with --build-arg EMBEDDING_PROVIDER=bge-small,
+        # which fails the build if the extras don't import. Setting bge-small on an
+        # image without them reports BGE while computing hash vectors. Switching
+        # providers on an existing store invalidates every stored vector (same 384
+        # dim, so nothing errors).
         - name: MNEM_EMBEDDING_DIM
           value: "384"
         - name: MNEM_ENCRYPTION_ENABLED
@@ -56,18 +93,22 @@ spec:
           limits:
             cpu: 2000m
             memory: 4Gi
+        # /livez answers without touching the store; /health decrypts every row to
+        # count tiers and is too heavy to call every few seconds.
         livenessProbe:
           httpGet:
-            path: /health
+            path: /livez
             port: 8000
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 3
         readinessProbe:
           httpGet:
-            path: /health
+            path: /livez
             port: 8000
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 3
         volumeMounts:
         - name: data
           mountPath: /data
@@ -78,15 +119,35 @@ spec:
       - name: data
         persistentVolumeClaim:
           claimName: mnemosyne-data
+      # Only the key file: mounting the whole Secret would also put the database
+      # password (and the API key) on disk in every pod.
       - name: keys
         secret:
           secretName: mnemosyne-secrets
+          items:
+          - key: master.key
+            path: master.key
+          defaultMode: 0400
+---
+# /data holds the knowledge-graph SQLite file, not the memories themselves.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mnemosyne-data
+  namespace: mnemosyne
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mnemosyne-api
   namespace: mnemosyne
+  labels:
+    app: mnemosyne
 spec:
   selector:
     app: mnemosyne
@@ -94,32 +155,3 @@ spec:
   - name: http
     port: 80
     targetPort: 8000
-  - name: p2p
-    port: 7742
-    targetPort: 7742
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: mnemosyne-hpa
-  namespace: mnemosyne
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: mnemosyne-api
-  minReplicas: 3
-  maxReplicas: 20
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80

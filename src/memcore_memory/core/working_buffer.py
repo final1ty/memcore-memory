@@ -1,7 +1,7 @@
 
 """
 Working Buffer Persistence - excellent version
-- Was in-memory only, lost on crash. Now persisted to WAL file + SQLite
+- Was in-memory only, lost on crash. Now persisted to a JSONL file (atomic temp-file replace)
 - Miller 7±2 with LRU eviction to Episodic
 """
 import json, time

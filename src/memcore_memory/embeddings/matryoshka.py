@@ -1,8 +1,12 @@
 
 """
-Matryoshka Embeddings + Binary Quantization - excellent version
-- MRL: single 1024d model, truncate to 384/768 dynamically
-- Binary quantization for pgvector 1/32 size, 3x faster
+EXPERIMENTAL, NOT WIRED IN. get_embedder() never returns this class, and
+``settings.matryoshka_enabled`` / ``settings.binary_quantization`` are read by
+nothing: every deployment embeds with BGEEmbedder or its hash fallback.
+
+Matryoshka (MRL) truncation of a nomic-embed model plus optional binary
+quantization. Kept as a starting point only; switching to it would re-dimension
+or re-embed everything already stored.
 """
 import sys
 from typing import List

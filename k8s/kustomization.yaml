@@ -1,0 +1,12 @@
+# Apply with `kubectl apply -k k8s/`. `kubectl apply -f k8s/` goes alphabetically and
+# reaches the Deployment before the Namespace exists; kustomize orders them.
+#
+# The Secret is deliberately not listed: create it first, by hand, as described in
+# secrets.example.yaml. Listing an example here would overwrite a real Secret with
+# placeholder values on every apply.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - mnemosyne-deployment.yaml

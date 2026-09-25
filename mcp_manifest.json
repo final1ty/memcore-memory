@@ -1,36 +1,123 @@
 {
   "name": "memcore-memory",
   "version": "1.0.0",
-  "description": "Production-grade lifelong memory with AES-256-GCM, 4-tier Ebbinghaus forgetting, 6-way hybrid retrieval, knowledge graph",
-  "mcp_version": "2025-06-18",
+  "author": "Kovács-Dobos Ádám",
+  "description": "Local-first encrypted memory for AI agents: AES-256-GCM SQLite store, 4-tier Ebbinghaus forgetting, hybrid retrieval (vector, BM25, graph and metadata arms re-ranked by recency and importance priors, weighted RRF), encrypted knowledge graph",
   "transport": "stdio",
   "command": "memcore",
-  "args": ["server", "mcp"],
+  "args": [
+    "server",
+    "mcp"
+  ],
   "env": {
     "MNEM_DATA_DIR": "Data directory (defaults to ~/.memcore). Local mode only.",
     "MNEM_MASTER_PASSWORD": "Required when the master key is password-protected; stdio has no terminal to prompt on. Local mode only.",
-    "MNEM_REMOTE_URL": "Equivalent to --remote: proxy to a running REST instance instead of opening a local store"
+    "MNEM_REMOTE_URL": "Equivalent to --remote: proxy to a running REST instance instead of opening a local store. An exported value switches `server mcp` to bridge mode; the mode is printed to stderr at startup",
+    "MNEM_API_KEY": "Bridge mode only (also --api-key): sent as 'Authorization: Bearer <key>' to a --remote instance that sets MNEM_API_KEY"
   },
   "remote_mode": {
-    "args": ["server", "mcp", "--remote", "http://HOST:8000"],
-    "note": "Forwards every tool to POST /mcp/call on a running instance, which dispatches through the same HANDLERS table as the stdio server - so the tool surface cannot drift between the two. Required whenever the real store lives inside a container: a host-side process opening its own data dir is a different database, not the same memory. memory_export/memory_import resolve their path on the server."
+    "args": [
+      "server",
+      "mcp",
+      "--remote",
+      "http://HOST:8000"
+    ],
+    "note": "Forwards every tool to POST /mcp/call on a running instance, which dispatches through the same HANDLERS table as the stdio server - so the tool surface cannot drift between the two. Required whenever the real store lives inside a container: a host-side process opening its own data dir is a different database, not the same memory. memory_export/memory_import take a file name inside <data_dir>/exports on the server (/data/exports in the container)."
   },
   "tools_count": 29,
   "tools": [
-    {"name": "memory_add"}, {"name": "memory_get"}, {"name": "memory_delete"},
-    {"name": "memory_update"}, {"name": "memory_recall"}, {"name": "memory_search_bm25"},
-    {"name": "memory_search_vector"}, {"name": "memory_search_temporal"},
-    {"name": "memory_search_graph"}, {"name": "memory_list"}, {"name": "memory_list_all"},
-    {"name": "memory_promote"}, {"name": "memory_demote"}, {"name": "memory_touch"},
-    {"name": "memory_forget"}, {"name": "memory_consolidate"}, {"name": "memory_stats"},
-    {"name": "memory_export"}, {"name": "memory_import"},
-    {"name": "kg_add_entity"}, {"name": "kg_add_relation"}, {"name": "kg_traverse"},
-    {"name": "kg_get_related"}, {"name": "kg_list_entities"}, {"name": "kg_delete_entity"},
-    {"name": "sync_status"}, {"name": "sync_peers"}, {"name": "config_get"},
-    {"name": "health_check"}
+    {
+      "name": "memory_add"
+    },
+    {
+      "name": "memory_get"
+    },
+    {
+      "name": "memory_delete"
+    },
+    {
+      "name": "memory_update"
+    },
+    {
+      "name": "memory_recall"
+    },
+    {
+      "name": "memory_search_bm25"
+    },
+    {
+      "name": "memory_search_vector"
+    },
+    {
+      "name": "memory_search_temporal"
+    },
+    {
+      "name": "memory_search_graph"
+    },
+    {
+      "name": "memory_list"
+    },
+    {
+      "name": "memory_list_all"
+    },
+    {
+      "name": "memory_promote"
+    },
+    {
+      "name": "memory_demote"
+    },
+    {
+      "name": "memory_touch"
+    },
+    {
+      "name": "memory_forget"
+    },
+    {
+      "name": "memory_consolidate"
+    },
+    {
+      "name": "memory_stats"
+    },
+    {
+      "name": "memory_export"
+    },
+    {
+      "name": "memory_import"
+    },
+    {
+      "name": "kg_add_entity"
+    },
+    {
+      "name": "kg_add_relation"
+    },
+    {
+      "name": "kg_traverse"
+    },
+    {
+      "name": "kg_get_related"
+    },
+    {
+      "name": "kg_list_entities"
+    },
+    {
+      "name": "kg_delete_entity"
+    },
+    {
+      "name": "sync_status"
+    },
+    {
+      "name": "sync_peers"
+    },
+    {
+      "name": "config_get"
+    },
+    {
+      "name": "health_check"
+    }
   ],
   "notes": {
     "tool_count": "Was previously listed as 33. Four names (sync_add_peer, sync_broadcast, sync_merge, config_set) were removed rather than kept as no-ops: they need a live P2P node or a writable config store that the stdio process does not have. Every tool listed here is backed by a real implementation - see the import-time check in mcp/server.py.",
-    "source_of_truth": "src/memcore_memory/mcp/tools.py"
+    "source_of_truth": "src/memcore_memory/mcp/tools.py",
+    "protocol_version": "Not pinned here: the MCP SDK (mcp>=2.2) negotiates the protocol version at runtime. A hard-coded mcp_version field went stale and was removed on 2026-09-25.",
+    "not_implemented": "sync_status and sync_peers report configuration only: P2P sync is not implemented. The PII filter, audit log and reranker are not wired into any request path; config_get lists them under not_implemented."
   }
 }

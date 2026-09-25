@@ -15,8 +15,11 @@ class LWWRegister:
         return self
 
 @dataclass
-class ORSet:
-    # Observed-Remove Set for P2P sync
+class LWWElementSet:
+    # Last-writer-wins element set: one wall-clock timestamp per add and per
+    # remove, remove wins ties. This is NOT an Observed-Remove (add-wins) set,
+    # which it used to be called: a concurrent add and remove resolve by clock,
+    # so peer clock skew decides the outcome.
     adds: Dict[str, float] = field(default_factory=dict)
     removes: Dict[str, float] = field(default_factory=dict)
 
@@ -30,8 +33,8 @@ class ORSet:
     def contains(self, elem: str) -> bool:
         return elem in self.adds and self.adds[elem] > self.removes.get(elem, 0)
 
-    def merge(self, other: 'ORSet') -> 'ORSet':
-        merged = ORSet()
+    def merge(self, other: 'LWWElementSet') -> 'LWWElementSet':
+        merged = LWWElementSet()
         all_keys = set(self.adds) | set(other.adds) | set(self.removes) | set(other.removes)
         for k in all_keys:
             merged.adds[k] = max(self.adds.get(k, 0), other.adds.get(k, 0))
@@ -41,11 +44,16 @@ class ORSet:
     def elements(self):
         return [e for e in self.adds if self.contains(e)]
 
+
+# The old, misleading name, kept for anything importing it. The wire format
+# (to_dict) never carried the class name, so nothing else changes.
+ORSet = LWWElementSet
+
 class MemoryCRDT:
     def __init__(self, node_id: str):
         self.node_id = node_id
         self.registers: Dict[str, LWWRegister] = {}
-        self.tombstones = ORSet()
+        self.tombstones = LWWElementSet()
 
     def update(self, mem_id: str, data: dict):
         self.registers[mem_id] = LWWRegister(value=data, timestamp=time.time(), node_id=self.node_id)
@@ -68,6 +76,18 @@ class MemoryCRDT:
                 continue
             merged.registers[mid] = winner
         return merged
+
+    def merge_from(self, other: 'MemoryCRDT') -> 'MemoryCRDT':
+        """Merge `other` into this object in place and return it.
+
+        merge() returns a new object, but P2PNode and GossipProtocol share one
+        MemoryCRDT by reference: rebinding either one's attribute to a merge
+        result would silently split them.
+        """
+        merged = self.merge(other)
+        self.registers = merged.registers
+        self.tombstones = merged.tombstones
+        return self
 
     def live_ids(self):
         """Ids that survive their tombstones - what a peer should actually hold."""
@@ -94,7 +114,7 @@ class MemoryCRDT:
                 node_id=reg.get('node', ''),
             )
         tomb = data.get('tombstones') or {}
-        crdt.tombstones = ORSet(
+        crdt.tombstones = LWWElementSet(
             adds={k: float(v) for k, v in (tomb.get('adds') or {}).items()},
             removes={k: float(v) for k, v in (tomb.get('removes') or {}).items()},
         )

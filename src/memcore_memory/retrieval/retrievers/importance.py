@@ -5,8 +5,14 @@ class ImportanceRetriever:
     def __init__(self, store):
         self.store = store
 
-    async def retrieve(self, query: str, k: int = 20) -> List[Dict]:
-        items = await self.store.list_all()
+    async def retrieve(self, query: str = "", k: int = 20, items=None) -> List[Dict]:
+        """Rank by importance, tier and rehearsals. ``query`` is ignored.
+
+        A query-independent prior: HybridRetriever uses it only to reorder what
+        the query-dependent arms found.
+        """
+        if items is None:
+            items = await self.store.list_all()
         scored = []
         for item in items:
             imp = item.metadata.get('importance', 0.5)

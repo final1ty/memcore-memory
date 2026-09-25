@@ -6,3 +6,25 @@ dist/
 *.db
 *.hnsw
 .memcore/
+.pytest_cache/
+# Key material and secrets. A raw master.key is 32 bytes that decrypt the whole store.
+*.key
+.master-password
+k8s/secrets.yaml
+# Store side files, for any run with MNEM_DATA_DIR pointed into the checkout
+*.db-wal
+*.db-shm
+*.db-journal
+*.vectors.json
+*.tmp
+audit.log
+working_buffer.jsonl
+# Backups and plaintext dumps. scripts/rescue-container-store.py writes
+# container-rescue-*.json holding decrypted content next to its OUTPUT_DIR.
+backups/
+*.tar.gz
+# deploy-skynas.sh names its full volume backup (raw master.key included) *.tgz.
+*.tgz
+container-rescue-*.json
+# Audit/workflow archives: raw agent transcripts quote live data and file contents.
+memcore-full-audit-*_wf_*/

@@ -76,11 +76,26 @@ async def test_old_instance_without_the_bridge_is_diagnosed(isolate_data_dir):
     """An instance built before these routes existed must say so, not fail obscurely."""
 
     async def handler(request):
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok", "version": "1.0.0"})
         return httpx.Response(404, text="Not Found")
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://old.test")
     with pytest.raises(RemoteUnavailable, match="predates"):
         await RemoteMCPServer("http://old.test", client=client).connect()
+    await client.aclose()
+
+
+async def test_wrong_service_is_not_blamed_on_an_old_build(isolate_data_dir):
+    """A bare 404 used to say "rebuild the container" even for a wrong port."""
+
+    async def handler(request):
+        return httpx.Response(404, text="Not Found")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://other.test")
+    with pytest.raises(RemoteUnavailable) as err:
+        await RemoteMCPServer("http://other.test", client=client).connect()
+    assert "predates" not in str(err.value)
     await client.aclose()
 
 
